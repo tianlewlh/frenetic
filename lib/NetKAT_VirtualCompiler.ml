@@ -1,4 +1,5 @@
 open NetKAT_Types
+open Optimize
 
 (* physical location *)
 type ploc = switchId * portId
@@ -6,28 +7,24 @@ type ploc = switchId * portId
 (* virtual location *)
 type vloc = vswitchId * vportId
 
-(* FIXME: these are already defined in GlobalCompiler *)
-let union (ps : policy list) : policy = List.fold_left Optimize.mk_union drop ps
-let seq (ps : policy list) : policy = List.fold_left Optimize.mk_seq id ps
 let match_ploc (sw,pt) = Filter (And (Test(Switch sw), Test(Location(Physical(pt)))))
 let match_vloc (vsw,vpt) = Filter (And (Test(VSwitch vsw), Test(VPort vpt)))
-let set_vloc (vsw,vpt) = seq [Mod (VSwitch vsw); Mod (VPort vpt)]
+let set_vloc (vsw,vpt) = mk_seq (Mod (VSwitch vsw)) (Mod (VPort vpt))
 
-let mk_union (indices : 'a list) (f : 'a -> policy) =
-  union (List.map f indices)
-
-let star = Optimize.mk_star
+let generate_union (indices : 'a list) (f : 'a -> policy) =
+  mk_big_union (List.map f indices)
 
 let dedup xs =
   xs |> Core.Core_list.of_list |> Core.Core_list.dedup |> Core.Core_list.to_list
 
 let get_vlocs (p : policy) =
+  let open Core.Std.List in
   let rec get = function
     | Filter (And (Test (VSwitch vsw), Test (VPort vpt))) -> [(vsw, vpt)]
     | Filter _ | Mod _ | Link _ -> []
     | Union (q, r) | Seq (q, r) -> (get q) @ (get r)
     | Star q -> get q in
-  dedup (get p)
+  to_list (dedup (get p))
 
 (* 
   
@@ -89,14 +86,14 @@ let get_vlocs (p : policy) =
 
 let compile (vpolicy : policy) (vtopo : policy) (vingress : policy)
 (out_fabric : policy) (in_fabric : policy) =
-  let fout = mk_union (get_vlocs out_fabric)
-    (fun vl -> seq [match_vloc vl; out_fabric; set_vloc vl]) in
-  let fin = mk_union (get_vlocs in_fabric)
-    (fun vl -> seq [match_vloc vl; in_fabric; set_vloc vl]) in
-  let ing = seq [vingress; fin] in
-  let p = seq [vpolicy; fout] in
-  let t = seq [vtopo; fin] in
+  let fout = generate_union (get_vlocs out_fabric)
+    (fun vl -> mk_big_seq [match_vloc vl; out_fabric; set_vloc vl]) in
+  let fin = generate_union (get_vlocs in_fabric)
+    (fun vl -> mk_big_seq [match_vloc vl; in_fabric; set_vloc vl]) in
+  let ing = mk_seq vingress fin in
+  let p = mk_seq vpolicy fout in
+  let t = mk_seq vtopo fin in
   (* ing; p; (t;p)^*  *)
-  seq [ing; p; star (seq [t; p])]
+  mk_big_seq [ing; p; mk_star (mk_seq t p)]
 
   
