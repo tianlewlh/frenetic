@@ -855,7 +855,7 @@ module Local = struct
           loop pol1 (fun p1 -> loop pol2 (fun p2 -> k (seq p1 p2)))
         | NetKAT_Types.Star pol ->
           loop pol (fun p -> k (star p))
-        | NetKAT_Types.Link(sw,pt,sw',pt') ->
+        | NetKAT_Types.Link _ | NetKAT_Types.VLink _ ->
           failwith "Not a local policy" in
     loop pol (fun p -> p)
 end

@@ -95,6 +95,9 @@ module Formatting = struct
       | Link (sw,pt,sw',pt') ->
         fprintf fmt "@[%Lu@@%lu =>@ %Lu@@%lu@]"
           sw pt sw' pt'
+      | VLink (vsw,vpt,vsw',vpt') ->
+        fprintf fmt "@[%Lu@@%Lu =>>@ %Lu@@%Lu@]"
+          vsw vpt vsw' vpt'
 end
   
 let format_policy = Formatting.pol Formatting.PAREN
@@ -109,6 +112,7 @@ let rec pretty_assoc (p : policy) : policy = match p with
   | Filter _ -> p
   | Mod _ -> p
   | Link _ -> p
+  | VLink _ -> p
   | Union (p1, p2) -> pretty_assoc_par p
   | Seq (p1, p2) -> pretty_assoc_seq p
   | Star p' -> Star (pretty_assoc p')

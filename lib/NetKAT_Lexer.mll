@@ -31,6 +31,7 @@ rule token = parse
   | "?" { QMARK }
   | "*" { STAR }
   | "=>" { DBLARROW }
+  | "=>>" { DBLARROWDBLHEAD }
   | "true" { TRUE }
   | "false" { FALSE }
   | "all" { ALL }

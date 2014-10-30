@@ -10,10 +10,12 @@ let switches_of_policy (p:policy) =
     match p with
     | Filter _ | Mod _ ->
        []
-    | Union(q,r) | Seq (q,r) ->
+    | Union (q,r) | Seq (q,r) ->
        collect q @ collect r
     | Star q ->
        collect q
-    | Link(sw1,_,sw2,_) ->
-       [sw1;sw2] in
+    | Link (sw1,_,sw2,_) ->
+       [sw1;sw2]
+    | VLink _ ->
+       [] in
   to_list (dedup (collect p))

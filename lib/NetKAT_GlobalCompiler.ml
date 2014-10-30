@@ -52,7 +52,10 @@ let cps (p : policy) =
     | Link (sw1,pt1,sw2,pt2) ->
        let gpc = next_global_pc sw2 pt2 in
        [Exit (mk_big_seq [match_link_end sw1 pt1 pc; set_pc gpc]);
-        Entrance (mk_big_seq [match_link_end sw2 pt2 gpc; set_pc k])] in
+        Entrance (mk_big_seq [match_link_end sw2 pt2 gpc; set_pc k])]
+    | VLink _ ->
+       (* SJS: implement this *)
+       failwith "not a global policy" in
   cps' p (next_local_pc ()) final_local_pc
 
 let split_cps (cps : cps_policy list) =
