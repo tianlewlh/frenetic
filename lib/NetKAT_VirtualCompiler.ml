@@ -162,17 +162,17 @@ begin
        vrel (vsw, vpt) |> List.map (fun (sw, pt) -> G_phys.V.create (OutPort (sw, pt)))
   in
 
-  let pgraph_closure = 
+  let pgraph_closure =
     let module Op = Graph.Oper.P(G_phys) in
-    Op.transitive_closure ~reflexive:true pgraph
+    Op.transitive_closure ~reflexive:false pgraph
   in
-  
-  let virt_ing = 
+
+  let virt_ing =
     List.map (fun (vsw, vpt) -> InPort (vsw, vpt) |> G_virt.V.create) (G_virt.locs_from_pred ving)
   in
 
-  let prod_ing = 
-    List.map (fun vv -> product [vv] (vrel' vv)) virt_ing 
+  let prod_ing =
+    List.map (fun vv -> product [vv] (vrel' vv)) virt_ing
     |> List.flatten
     |> List.map (fun (vv, pv) -> G_prod.V.create (ConsistentIn (vv, pv)))
   in
@@ -191,24 +191,24 @@ begin
     | InconsistentOut (vvertex, pvertex) ->
        let physical_sucs =
          match vrel' vvertex with
-         | [] -> [loop_of pvertex]
+         (* SJS: This is a hack. We interpret [] as true, although to be consistent we would have
+                 to interpret it as false *)
+         | [] -> G_phys.succ pgraph_closure pvertex
          | logical_sucs -> inters logical_sucs (G_phys.succ pgraph_closure pvertex) in
-       List.map (fun pv -> ConsistentOut (vvertex, pv) |> G_prod.V.create) physical_sucs
+       List.map (fun psuc -> ConsistentOut (vvertex, psuc) |> G_prod.V.create) physical_sucs
     | ConsistentOut (vvertex, pvertex) ->
-       (* go across virtual and physical topology *)
+       (* SJS: check that if there are no successors, we have reached the egress *)
        let virtual_sucs = G_virt.succ vgraph vvertex in
-       let physical_sucs = G_phys.succ pgraph pvertex in
-       (* SJS: make sure that if this product is empty,
-          we have reached the virtual and physical egress*)
-       product virtual_sucs physical_sucs
-       |> List.map (fun (vv, pv) -> G_prod.V.create (InconsistentIn (vv, pv)))
+       List.map (fun vsuc -> InconsistentIn (vsuc, pvertex) |> G_prod.V.create) virtual_sucs
     | InconsistentIn (vvertex, pvertex) ->
        let physical_sucs =
          match vrel' vvertex with
-         | [] -> [pvertex]
+         (* SJS: This is a hack. We interpret [] as true, although to be consistent we would have
+                 to interpret it as false *)
+         | [] -> G_phys.succ pgraph_closure pvertex
          | logical_sucs -> inters logical_sucs (G_phys.succ pgraph_closure pvertex) in
-       List.map (fun pv -> ConsistentIn (vvertex, pv) |> G_prod.V.create) physical_sucs
-    end 
+       List.map (fun pv -> ConsistentIn (vvertex, pv) G_prod.V.create) physical_sucs
+    end
   in
 
   let rec make work_list edges g =
@@ -222,7 +222,7 @@ begin
          let sucs = step v in
          let edges' = List.fold_left (fun edges suc -> (v, suc)::edges) edges sucs in
          make (sucs@work_list) edges' g'
-    end 
+    end
   in
 
   make prod_ing [] (G_prod.empty)
