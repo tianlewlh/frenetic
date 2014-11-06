@@ -25,7 +25,6 @@ PROBE_INTERVAL = 5
 # I will replace this and instead use LLDP
 ETH_TYPE_DISCOVERY_PACKET = 0x3366
 
-# (nb): Could we make this a Graph or do we explicitly need directed edges?
 nib = nx.DiGraph()
 
 ##
@@ -66,52 +65,44 @@ def probe():
     print nib.edges(data=True)
     return
 
-##
-# Handle Events
-##
-def handler(event):
-    #print event
-    typ = event['type']
-    if typ  == 'switch_up':
-        sw = event['switch_id']
-        if nib.node.has_key(sw):
+class TopologyDiscovery(webkat.App):
+    def switch_up(self,switch_id):
+	if nib.node.has_key(switch_id):
             pass
         else:
-            nib.add_node(sw,device='switch')
-            nib.node[sw]['ports'] = set()
-    elif typ == 'port_up':
-        nib.node[event['switch_id']]['ports'].add(event['port_id'])
-    elif typ == 'switch_down':
-        sw = event['switch_id']
-        nib.remove_node(sw)
-    elif typ == 'packet_in':
-        sw = event['switch_id']
-        pt = event['port_id']
-        bits = base64.b64decode(event['payload']['buffer'])
-        pkt = packet.Packet(bits)
-        p = get_ethernet(pkt)
-        if p.ethertype == ETH_TYPE_ARP:
-            # (nb): For now, assign a unique hostname concat of parent-switch:port
-            host_id = "h%s" % (str(sw) + ":" + str(pt))
-            nib.add_node(host_id,device='host')
-            nib.add_edge(sw,host_id,outport=pt,inport=0)
-            nib.add_edge(host_id,sw,outport=0,inport=pt)
+            nib.add_node(switch_id,device='switch')
+            nib.node[switch_id]['ports'] = set()
+	webkat.update(policy())
+    def switch_down(self,switch_id):
+	nib.remove_node(switch_id)
+	webkat.update(policy())
+    def port_up(self,switch_id,port_id):
+	nib.node[switch_id]['ports'].add(port_id)
+	webkat.update(policy())
+    def port_down(self,switch_id,port_id):
+	nib.node[switch_id]['ports'].remove(port_id)
+	webkat.update(policy())
+    def packet_in(self,switch_id,port_id,packet):
+	p = get_ethernet(packet)
+	if p.ethertype == ETH_TYPE_ARP:
+	   # (nb): For now, assign a unique hostname concat of parent-switch:port
+	   host_id = "h%s" % (str(switch_id) + ":" + str(port_id))
+	   nib.add_node(host_id,device='host')
+	   nib.add_edge(switch_id,host_id,outport=port_id,inport=0)
+	   nib.add_edge(host_id,switch_id,outport=0,inport=port_id)
         elif p.ethertype == ETH_TYPE_DISCOVERY_PACKET:
-            # (nb): Remove ryu.packet's MAC string format
-            src_sw = int((p.dst).replace(':', ''), 16)
-            src_port = int((p.src).replace(':',''), 16)
-            nib.add_edge(src_sw,sw,outport=src_port,inport=pt)
-            nib.add_edge(sw,src_sw,outport=pt,inport=src_port)
-        pass
-    else:
-        pass
+	   # (nb): Remove ryu.packet's MAC string format
+	   src_sw = int((p.dst).replace(':',''),16)
+   	   src_port = int((p.src).replace(':',''),16)
+   	   nib.add_edge(src_sw,switch_id,outport=src_port,inport=port_id)
+	   nib.add_edge(switch_id,src_sw,outport=port_id,inport=src_port)	
+	pass
 
-    #print "NIB: %s" % json_graph.node_link_data(nib)
-    return
+	# print "NIB: %s" % json_graph.node_link_data(nib)
+	webkat.update(policy())
 
 def main():
-    webkat.update(policy())
-    webkat.event_loop(handler)
+    TopologyDiscovery().start()
     webkat.periodic(probe,PROBE_INTERVAL)
     webkat.start()
 

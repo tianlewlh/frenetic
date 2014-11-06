@@ -31,7 +31,7 @@ def flood(sw):
     def flood_port(pt):
         outs = [_pt for _pt in ports if _pt != pt]
         return filter(test("port", pt)) >> union(output(pt) for pt in outs)
-    
+
     return union(flood_port(port) for port in ports)
 
 
@@ -47,7 +47,7 @@ def switch_policy(sw):
         src = test("ethSrc", mac)
         dst = test("ethDst", mac)
         return (known | filter(dst) >> output(table[sw][mac]), unknown & ~src)
-        
+
     (known_pol, unknown_pred) = reduce(f, table[sw].keys(), (drop(), true()))
     return known_pol | filter(unknown_pred) >> (controller() | flood(sw))
 
