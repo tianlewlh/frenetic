@@ -160,6 +160,7 @@ class RedisNib:
 
     def nodes(self):
         """ Return a list of all the nodes. """
+        # (ks): Do we need (data=True) like networkx? Get attributes as well?
         return list(self.r.smembers('nodes')) # return the set of all nodes
 
     def add_edge(self, u, v, attr_dict=None, **attr):
@@ -222,14 +223,39 @@ class RedisNib:
         if v not in s:
             self.add_node(v)
 
+    def edges(self):
+        """ Return a list of all the edge as tuples. """
+        # (ks): Do we need (data=True)?  To get attributes as well?
 
-    # TODO (ks): Implement this stuff from Nick's code
-    # nib.edges(data=True)
+        # We must convert a set of concat'ed strings back in to tuples
+        l = list(self.r.smembers('edges'))
+        edgelist = []
+        for estr in l: # l = ['sw2:sw4', ....
+            if ':' not in estr:
+                print 'Error in parsing edge name' + str
+                return None
+            if len(l) is not 2:
+                print 'Error in parsing edge name list' + str
+                return None
+            pair = estr.split(':')
+            edgelist.append( (pair[0], pair[1]) )
+        return edgelist
+
+    def remove_edge(self, u, v):
+        """Remove the edge between nodes u and v."""
+        # TODO (ks): do we need to report if not found?
+        self.r.srem('edges', u + ':' + v)
+        # Remove node attributes, if they exist
+        self.r.delete('edgeattr:' + u + ':' + v)
+
+    # TODO (ks): Implement this stuff (and others...?):
+    # More attribute related things
+    # More graph computations...maybe we can leverage networkx
 
 
 ########## Tests ##################
 
-def test_add_del(nib):
+def test_add_del_node(nib):
     # setup
     nib.r.flushall() # wipe previous
     nib.add_node('sw1',device='switch')
@@ -293,7 +319,7 @@ def test_ports(nib):
     assert (nib.r.sismember('nodeports:sw1', 80) == False), \
        'Failed to delete port 80 from set sw1'
 
-def test_add_edges(nib):
+def test_add_del_edges(nib):
     # setup
     nib.r.flushall() # wipe previous
     nib.add_edge('sw1','sw2')
@@ -306,22 +332,40 @@ def test_add_edges(nib):
     # Test add edge:
     # assert that the count for set 'edges' is 2.
     assert (nib.r.scard('edges') == 2), 'Failed to add nodes'
+    # assert basic edge add
+    assert (nib.r.sismember('edges', 'edge:sw1:sw2') is False), \
+        'Failed to add edge sw1:sw2'
     # assert that device attributes set for sw2->sw4
     assert (nib.r.hget('edgeattr:sw2:sw4', 'outport') ==
        '8675'), 'Failed to set edge attrib'
 
+    nib.edges()
     # Test remove edge:
-    #nib.remove_node('sw1')
-    #assert (nib.r.sismember('nodes', 'sw1') is False), 'Failed to delete sw1'
-    #nib.remove_node('sw2')
-    #assert (nib.r.exists('nodeattr:sw1') is False), 'Failed to del sw2 attrib'
+    nib.remove_edge('sw1', 'sw2')
+    assert (nib.r.sismember('nodes', 'sw1:sw2') is False), \
+        'Failed to delete sw1:sw2'
+    nib.remove_edge('sw2', 'sw4')
+    assert (nib.r.exists('edgeattr:sw2:sw4') is False), \
+        'Failed to del sw2 attrib'
+
+def test_get_edges(nib):
+    # setup
+    nib.r.flushall() # wipe previous
+    nib.add_edge('sw1','sw2')
+    nib.add_edge('sw2','sw4',outport=8675,inport=80)
+
+    # test for returning a set of the nodes
+    l = [('sw1','sw2'), ('sw2','sw4') ]
+    # convert to sets for comparison of two (unordered) lists
+    assert (set(nib.edges()) == set(l)) is True, 'Failed to get correct set of edges'
 
 def main():
     nib = RedisNib()
-    test_add_del(nib)
+    test_add_del_node(nib)
     test_get_node(nib)
     test_ports(nib)
-    test_add_edges(nib)
+    test_add_del_edges(nib)
+    test_get_edges(nib)
     print 'All assertions pass'
 
 if __name__ == '__main__':
