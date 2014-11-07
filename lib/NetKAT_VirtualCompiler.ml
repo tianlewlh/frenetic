@@ -207,7 +207,7 @@ begin
                  to interpret it as false *)
          | [] -> G_phys.succ pgraph_closure pvertex
          | logical_sucs -> inters logical_sucs (G_phys.succ pgraph_closure pvertex) in
-       List.map (fun pv -> ConsistentIn (vvertex, pv) G_prod.V.create) physical_sucs
+       List.map (fun pv -> ConsistentIn (vvertex, pv) |> G_prod.V.create) physical_sucs
     end
   in
 
