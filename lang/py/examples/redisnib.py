@@ -131,6 +131,7 @@ class RedisNib:
            - None if unable to find node.
            - Node n's value mapping of 'attr_lookup' for if provided
            - Node n's name if node found and no 'attr_lookup' provided
+             (Used to test if exists.)
              (TODO is there something better to return for the last case?)
         """
         # First make sure the node exists
@@ -223,6 +224,40 @@ class RedisNib:
         if v not in s:
             self.add_node(v)
 
+    def edge(self, u, v, attr_lookup=None):
+        """
+        Parameters
+        ----------
+        u, v : (nodes, seeking edge u->v)
+            String representation of nodes u and v.
+        attr_lookup :
+            Lookup and return attributes using key=value.
+
+        Example:
+
+         >>> if(nib.edge('sw2', 'sw4', 'outport') == '8675'): # test attrib
+         >>>     # .....something
+         >>> nib.edge('sw1', 'sw2') is not None) # test for edge presence
+
+        Returns:
+           - None if unable to find edge u->v.
+           - Edge u->v's value mapping of 'attr_lookup' for if provided
+           - Edge u->v's name if edge found and no 'attr_lookup' provided
+             (Used to test if exists.)
+             (TODO is there something better to return for the last case?)
+        """
+        # First make sure the edge exists
+        s = self.r.smembers('edges') # return the set of all edges
+        edgename = u + ':' + v
+        if (edgename) not in s:
+            return None
+        else:
+            if attr_lookup is not None:
+                # The node exists. Now lookup the requested attributes
+                return self.r.hget('edgeattr:'+edgename, attr_lookup)
+            else:
+                return edgename
+
     def edges(self):
         """ Return a list of all the edge as tuples. """
         # (ks): Do we need (data=True)?  To get attributes as well?
@@ -307,7 +342,7 @@ def test_ports(nib):
     assert (nib.r.sismember('nodeports:sw1', 80) == True), 'Failed to add port'
 
     # test add_port to a fake node
-    assert(nib.add_port('sw234234', 80) is None), \
+    assert (nib.add_port('sw234234', 80) is None), \
         'Failed to return None for adding port to fake switch'
 
     # test returning the set of nodes
@@ -357,7 +392,16 @@ def test_get_edges(nib):
     # test for returning a set of the nodes
     l = [('sw1','sw2'), ('sw2','sw4') ]
     # convert to sets for comparison of two (unordered) lists
-    assert (set(nib.edges()) == set(l)) is True, 'Failed to get correct set of edges'
+    assert (set(nib.edges()) == set(l)) is True, \
+        'Failed to get correct set of edges'
+
+    # test for unadded edge. Could switch to assertIsNotNone if using py2.7
+    assert (nib.edge('sw1', 'sw9') is None), 'Found phantom edge...'
+    # test that you can lookup an expected edge without attributes
+    assert (nib.edge('sw1', 'sw2') is not None), 'Couldn\'t find edge sw1->sw2'
+    # test for correct attribute setting
+    assert (nib.edge('sw2', 'sw4', 'outport') == '8675'), \
+        'Error getting  edge attrib outport for sw2->sw4'
 
 def main():
     nib = RedisNib()
