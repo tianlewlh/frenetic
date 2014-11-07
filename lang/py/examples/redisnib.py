@@ -31,10 +31,10 @@ class RedisNib:
     def add_node(self, n, attr_dict=None, **attr):
         """Add a single node n and update node attributes.
 
-        Parameters (verbatim from networkx/classes/digraph.py:add_node)
+        Parameters (similar to networkx/classes/digraph.py:add_node)
         ----------
         n : node
-            A node can be any hashable Python object except None.
+            A node string representation of a node.
         attr_dict : dictionary, optional (default= no attributes)
             Dictionary of node attributes.  Key/value pairs will
             update existing data associated with the node.
@@ -76,11 +76,11 @@ class RedisNib:
         >>> nib.add_port(event['switch_id'], event['port_id'])
         >>> # Replaces (hopefully, not tested!!):
         >>> # nib.node[event['switch_id']]['ports'].add(event['port_id'])
-           
+
         How redis is used here:
           Each node 'n' has a set of ports stored as a redis set indexed
           by 'nodeports:'+n
-           
+
         """
         # First make sure the node exists
         s = self.r.smembers('nodes') # return the set of all nodes
@@ -97,37 +97,52 @@ class RedisNib:
         return self.r.srem('nodeports:'+n, p)
 
     def node_ports(self, n):
-        """ 
+        """
         TODO/WARNING: Returns a set of _strings_ not ints.  Which is preferred?
 
-        Return the set of all ports (as strings) for node n, or empty set 
+        Return the set of all ports (as strings) for node n, or empty set
         ([]) if no ports found.
- 
-        Example: 
+
+        Example:
         >>> for port in nib.node_ports(node):
         >>> #replaces "for port in nib.node[node]['ports']:"
- 
-        """ 
+
+        """
         return self.r.smembers('nodeports:'+n)
 
     def node(self, n, attr_lookup=None):
-        """ Gets node n with optional attributes.
-            Note that the syntax for 'node' is different from networkx
+        """
+        Parameters
+        ----------
+        n : node
+            A node string representation of a node.
+        attr_lookup :
+            Lookup and return attributes using key=value.
 
-            Example:
-            >>> if(nib.node(node, 'device') == 'switch'):
-            >>> # With networkx, this would have been:
-            >>> #if nib.node[node]['device'] == 'switch':
+        Example:
+        >>> if(nib.node(node, 'device') == 'switch'):
+        >>> # With networkx, this would have been:
+        >>> #if nib.node[node]['device'] == 'switch':
 
-            Returns None if unable to find node, or unable to find node
-            with requested attribute """
+        >>> if (nib.node(sw1) is not None):
+        >>> # replaces: nib.node.has_key(sw)
+
+        Returns:
+           - None if unable to find node.
+           - Node n's value mapping of 'attr_lookup' for if provided
+           - Node n's name if node found and no 'attr_lookup' provided
+             (TODO is there something better to return for the last case?)
+        """
         # First make sure the node exists
         s = self.r.smembers('nodes') # return the set of all nodes
         if n not in s:
             return None
         else:
-            # The node exists. Now lookup the requested attributes
-            return self.r.hget('nodeattr:'+n, attr_lookup)
+            if attr_lookup is not None:
+                # The node exists. Now lookup the requested attributes
+                return self.r.hget('nodeattr:'+n, attr_lookup)
+            else:
+                return n
 
     def remove_node(self, n):
         """Remove node n.
@@ -182,7 +197,9 @@ def test_get_node(nib):
 
     # test for unadded node. Could switch to assertIsNotNone if using py2.7
     assert (nib.node('sw7777') is None), 'Found phantom node...'
-    # test for correct device setting
+    # test that you can lookup an expected node without attributes
+    assert (nib.node('sw1') is not None), 'Couldn\'t find node sw1'
+    # test for correct attribute setting
     assert (nib.node('sw1', 'device') == 'switch'), 'Found dangling node attrib'
 
     # test for returning a set of the nodes
@@ -206,7 +223,7 @@ def test_ports(nib):
 
     # test add_port to a fake node
     assert(nib.add_port('sw234234', 80) is None), \
-        'Failed to return None for adding port to fake switch' 
+        'Failed to return None for adding port to fake switch'
 
     # test returning the set of nodes
     assert (nib.node_ports('sw1') == set(['80'])),\
