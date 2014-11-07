@@ -50,7 +50,7 @@ class RedisNib:
               do nothing.  (We can change this however we like.)
             - The attributes (if present) for each node are stored in a redis
               hash entry (which is basically a python dictionary) with the
-              prefix 'nodeattr'+n (one hash entry per node attributes
+              prefix 'nodeattr'+n (one hash entry per node attributes)
         """
         # If attributes, store them in a redis hash as ('nodeattr:'+n)
         if attr:
@@ -162,10 +162,69 @@ class RedisNib:
         """ Return a list of all the nodes. """
         return list(self.r.smembers('nodes')) # return the set of all nodes
 
+    def add_edge(self, u, v, attr_dict=None, **attr):
+        """Add an edge between u and v.
+
+        The nodes u and v will be automatically added if they are
+        not already in the graph.
+
+        Edge attributes can be specified with keywords.
+
+        Parameters (similar to networkx/classes/digraph.py:add_edge)
+        ----------
+        u,v : nodes
+            Nodes represented as strings.
+        attr_dict : dictionary, optional (default= no attributes)
+            Dictionary of edge attributes.  Key/value pairs will
+            update existing data associated with the edge.
+        attr : keyword arguments, optional
+            Edge data can be assigned using keyword arguments.
+
+        Notes
+        -----
+        Adding an edge that already exists updates the edge data.
+
+        How redis is used here:
+            - The nodes are stored in a redis set 'edges' (One set to store
+              all. The edge is stored as concat strings (u+':'+v), to be
+              (un)marshalled as necessary.  (Directional.)
+
+            - The attributes (if present) for each edge are stored in a redis
+              hash entry (which is basically a python dictionary) with the
+              prefix 'edgeattr'+u+':'+v (one hash entry per edge attributes)
+
+        Examples
+        --------
+        >>> nib.add_edge('sw1','sw2')
+        >>> nib.add_edge('sw2','sw4',outport=8675,inport=80)
+
+        """
+
+        # If attributes, store them in a redis hash as ('edgeattr:'+n)
+        if attr:
+            # From digraph.py
+            if attr_dict is None:
+                attr_dict=attr
+            try:
+                attr_dict.update(attr)
+            except: # TODO (ks): how to handle errors?
+                print 'The attr_dict argument must be a dictionary.'
+            # Store the attributes in addition to storing the node
+            self.r.hmset('edgeattr:' + u + ':' + v, attr_dict)
+        # Add u->v to the set of edges.
+        self.r.sadd('edges', u + ':' + v)
+
+        # "The nodes u and v will be automatically added if they are
+        # not already in the graph." (from digraph.py, we can change)
+        s = self.r.smembers('nodes') # return the set of all nodes
+        if u not in s:
+            self.add_node(u)
+        if v not in s:
+            self.add_node(v)
+
+
     # TODO (ks): Implement this stuff from Nick's code
     # nib.edges(data=True)
-    # nib.node.has_key(sw)
-    # nib.add_edge(sw,host_id,outport=pt,inport=0)
 
 
 ########## Tests ##################
@@ -181,7 +240,7 @@ def test_add_del(nib):
     assert (nib.r.scard('nodes') == 2), 'Failed to add nodes'
     # assert that device attributes set for sw1
     assert (nib.r.hget('nodeattr:sw1', 'device') ==
-       'switch'), 'Failed to set attrib'
+       'switch'), 'Failed to set node attrib'
 
     # Test remove:
     nib.remove_node('sw1')
@@ -234,11 +293,35 @@ def test_ports(nib):
     assert (nib.r.sismember('nodeports:sw1', 80) == False), \
        'Failed to delete port 80 from set sw1'
 
+def test_add_edges(nib):
+    # setup
+    nib.r.flushall() # wipe previous
+    nib.add_edge('sw1','sw2')
+    nib.add_edge('sw2','sw4',outport=8675,inport=80)
+
+    # Test that adding edge adds both nodes
+    assert (nib.node('sw1') is not None), 'Couldn\'t find node sw1 (add edge)'
+    assert (nib.node('sw2') is not None), 'Couldn\'t find node sw2 (add edge)'
+
+    # Test add edge:
+    # assert that the count for set 'edges' is 2.
+    assert (nib.r.scard('edges') == 2), 'Failed to add nodes'
+    # assert that device attributes set for sw2->sw4
+    assert (nib.r.hget('edgeattr:sw2:sw4', 'outport') ==
+       '8675'), 'Failed to set edge attrib'
+
+    # Test remove edge:
+    #nib.remove_node('sw1')
+    #assert (nib.r.sismember('nodes', 'sw1') is False), 'Failed to delete sw1'
+    #nib.remove_node('sw2')
+    #assert (nib.r.exists('nodeattr:sw1') is False), 'Failed to del sw2 attrib'
+
 def main():
     nib = RedisNib()
     test_add_del(nib)
     test_get_node(nib)
     test_ports(nib)
+    test_add_edges(nib)
     print 'All assertions pass'
 
 if __name__ == '__main__':
