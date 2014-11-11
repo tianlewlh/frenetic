@@ -7,6 +7,16 @@ type ploc = switchId * portId
 (* virtual location *)
 type vloc = vswitchId * vportId
 
+let match_ploc (sw,pt) = Filter (And (Test(Switch sw), Test(Location(Physical(pt)))))
+let match_vloc (vsw,vpt) = Filter (And (Test(VSwitch vsw), Test(VPort vpt)))
+let set_vloc (vsw,vpt) = mk_seq (Mod (VSwitch vsw)) (Mod (VPort vpt))
+
+let generate_union (indices : 'a list) (f : 'a -> policy) =
+  mk_big_union (List.map f indices)
+
+let dedup xs =
+  xs |> Core.Core_list.of_list |> Core.Core_list.dedup |> Core.Core_list.to_list
+
 (* node type *)
 type ('a, 'b) node_type =
   | InPort of 'a * 'b
@@ -87,20 +97,50 @@ module G_virt = MakeGraph (struct
     | _ -> failwith "Virtual Compiler: not a valid virtual topology"
 end) (V_virt)
 
-module G_phys = MakeGraph (struct
-  type switch = switchId
-  type port = extendedPort
-  let rec locs_from_pred pred =
-    match pred with
-    | And (Test (Switch sw), Test (Location (Physical pt))) -> [(sw, RealPort pt)]
-    | Or (p1, p2) -> locs_from_pred p1 @ locs_from_pred p2
-    | _ -> failwith "Virtual Compiler: not a valid ingress/egress predicate"
-  let rec links_from_topo topo =
-    match topo with
-    | Link (sw1,pt1,sw2,pt2) -> [(sw1, RealPort pt1, sw2, RealPort pt2)]
-    | Union (t1, t2) -> links_from_topo t1 @ links_from_topo t2
-    | _ -> failwith "Virtual Compiler: not a valid virtual topology"
-end) (V_phys)
+(* SJS: super ugly! do this better *)
+module G_phys = struct
+  include MakeGraph (struct
+    type switch = switchId
+    type port = extendedPort
+    let rec locs_from_pred pred =
+      match pred with
+      | And (Test (Switch sw), Test (Location (Physical pt))) -> [(sw, RealPort pt)]
+      | Or (p1, p2) -> locs_from_pred p1 @ locs_from_pred p2
+      | _ -> failwith "Virtual Compiler: not a valid ingress/egress predicate"
+    let rec links_from_topo topo =
+      match topo with
+      | Link (sw1,pt1,sw2,pt2) -> [(sw1, RealPort pt1, sw2, RealPort pt2)]
+      | Union (t1, t2) -> links_from_topo t1 @ links_from_topo t2
+      | _ -> failwith "Virtual Compiler: not a valid virtual topology"
+  end) (V_phys)
+  
+  let make_graph (ingress : pred) (egress : pred) (topo : policy) =
+    let g = make_graph ingress egress topo in
+    let add_vertex v g = add_vertex g v in
+    let add_edge v1 v2 g = add_edge g v1 v2 in
+
+    let add_loop sw g =
+      let inLoop = G.V.create (InPort (sw, Loop)) in
+      let outLoop = G.V.create (OutPort (sw, Loop)) in
+      let g = g |> add_vertex inLoop
+                |> add_vertex outLoop
+                |> add_edge inLoop outLoop
+                |> add_edge outLoop inLoop in
+      (inLoop, outLoop, g)
+    in
+
+    let install_loop v g =
+      match V.label v with
+      | InPort (sw, _) ->
+         let _, outLoop, g = add_loop sw g in
+         add_edge v outLoop g
+      | OutPort (sw, _) ->
+         let _, _, g = add_loop sw g in
+         g
+    in
+    fold_vertex install_loop g g
+end
+
 
 (* product vertex *)
 type product = (G_virt.V.t * G_phys.V.t)
@@ -177,12 +217,6 @@ begin
     |> List.map (fun (vv, pv) -> G_prod.V.create (ConsistentIn (vv, pv)))
   in
 
-  let loop_of pvertex =
-    match G_phys.V.label pvertex with
-    | InPort (sw, _) -> OutPort (sw, Loop) |> G_phys.V.create
-    | OutPort (sw, _) -> InPort (sw, Loop) |> G_phys.V.create
-  in
-
   let step product_vertex =
     begin match G_prod.V.label product_vertex with
     | ConsistentIn (vvertex, pvertex)  ->
@@ -225,40 +259,198 @@ begin
     end
   in
 
-  make prod_ing [] (G_prod.empty)
+  (prod_ing, make prod_ing [] (G_prod.empty))
 
 end
 
+type mark =
+  | Seen
+  | Ok
+  | NotOk
 
-(* module WEIGHT = struct
-  type label = unit
-  type t = int
-  let weight _ = 1
-  let compare = compare
-  let add x y = x + y
-  let zero = 0
+let generate_fabrics v_topo v_ing v_eg p_topo p_ing p_eg vrel =
+begin
+  let vgraph = G_virt.make_graph v_ing v_eg v_topo in
+  let pgraph = G_phys.make_graph p_ing p_eg p_topo in
+  let prod_ing, prod_graph = make_product_graph vgraph pgraph v_ing vrel in
+
+  let mark_tbl = Tbl.create () in
+  let dist_tbl = Tbl.create () in
+
+  let module WEIGHT = struct
+    type label = unit
+    type t = int
+    let weight _ = 1
+    let compare = compare
+    let add x y = x + y
+    let zero = 0
+  end in
+
+  let module Dijkstra = Graph.Path.Dijkstra(G_phys)(WEIGHT) in
+
+(*   let phys_of_prod_vert prod_vertex =
+    match G_prod.V.label prod_vertex with
+    | ConsistentIn (_, pv) | InconsistentOut (_, pv) | ConsistentOut (_, pv)
+    | InconsistentIn (_, pv) -> pv
+  in *)
+
+ (*  let destruct_prod_v v =
+    match G_prod.V.label v with
+    | ConsistentIn (vv, pv) ->
+      begin match G_virt.V.label vv, G_phys.V.label pv with
+      | InPort (vsw, vpt), InPort (sw, pt) -> (vsw, vpt, sw, pt)
+      | _ -> assert false
+      end
+    | InconsistentOut (vv, pv) ->
+      begin match G_virt.V.label vv, G_phys.V.label pv with
+      | OutPort (vsw, vpt), InPort (sw, pt) -> (vsw, vpt, sw, pt)
+      | _ -> assert false
+      end
+    | ConsistentOut (vv, pv) ->
+      begin match G_virt.V.label vv, G_phys.V.label pv with
+      | OutPort (vsw, vpt), OutPort (sw, pt) -> (vsw, vpt, sw, pt)
+      | _ -> assert false
+      end
+    | InconsistentIn (vv, pv) ->
+      begin match G_virt.V.label vv, G_phys.V.label pv with
+      | InPort (vsw, vpt), OutPort (sw, pt) -> (vsw, vpt, sw, pt)
+      | _ -> assert false
+      end
+  in
+
+  let destruct_prod_e v1 v2 =
+    let (vsw1, vpt1, sw1, pt1) = destruct_prod_v v1 in
+    let (vsw2, vpt2, sw2, pt2) = destruct_prod_v v2 in
+    begin
+      match G_prod.V.label v1, G_prod.V.label v2 with
+      | ConsistentIn _, InconsistentOut _ ->
+         assert (sw1 = sw2);
+         assert (pt1 = pt2)
+      | InconsistentOut _, ConsistentOut _ ->
+         assert (vsw1 = vsw2);
+         assert (vpt1 = vpt2)
+      | ConsistentOut _, InconsistentIn _ ->
+         assert (sw1 = sw2);
+         assert (pt1 = pt2)
+      | InconsistentIn _, ConsistentIn _ ->
+         assert (vsw1 = vsw2);
+         assert (vpt1 = vpt2)
+      | _, _ -> 
+         assert false
+    end;
+    (vsw1, vpt1, vsw2, vpt2, sw1, pt1, sw2, pt2)
+  in *)
+
+  let unwrap_e e = (G_phys.V.label (G_phys.E.src e), G_phys.V.label (G_phys.E.dst e)) in
+
+  let unwrap_path path =
+    let rec dedup vpath =
+      match vpath with
+      | [] -> []
+      | [(v1, v2)] -> [v1; v2]
+      | (v1, v2) :: ((v2', v3) :: _ as vpath') -> 
+         assert (v2 = v2');
+         v1 :: dedup vpath' in
+    dedup (List.map unwrap_e path)
+  in
+
+  let rec visit prod_vertex =
+    match Tbl.find mark_tbl prod_vertex with
+    | Some mark -> mark (* already visited *)
+    | None ->
+      let () = Tbl.replace mark_tbl ~key:prod_vertex ~data:Seen in
+      let sucs = G_prod.succ prod_graph prod_vertex in
+      let check = begin
+        match prod_vertex with
+        | ConsistentOut _ | ConsistentIn _ -> List.for_all
+        | InconsistentIn _ | InconsistentOut _ -> List.exists
+      end in
+      let mark = if check (fun v -> visit v <> NotOk) sucs then Ok else NotOk in
+      Tbl.replace mark_tbl ~key:prod_vertex ~data:mark;
+      mark
+  in
+
+  let rec get_ok_graph' v ok_g =
+    if Tbl.find mark_tbl v = Some Ok then
+      let ok_g' = G_prod.add_vertex ok_g v in
+      let ok_g'' = G_prod.fold_succ get_ok_graph' prod_graph v ok_g' in
+      let add_edge v' g = G_prod.add_edge g v v' in 
+      G_prod.fold_succ add_edge ok_g'' v ok_g''
+    else
+      ok_g
+  in
+
+  let get_ok_graph () =
+    List.fold_right get_ok_graph' prod_ing G_prod.empty
+  in
+
+  let get_path_and_distance pv1 pv2 =
+    match Tbl.find dist_tbl (pv1, pv2) with
+    | Some (path, dist) -> (path, dist)
+    | None -> begin
+      try
+        let path', dist = Dijkstra.shortest_path pgraph pv1 pv2 in
+        let path = unwrap_path path' in
+        Tbl.replace dist_tbl ~key:(pv1, pv2) ~data:(path, dist);
+        (path, dist)
+      with Not_found ->
+        failwith "Virtual Compiler: bug in implementation"
+    end
+  in
+
+  let rec policy_of_path path =
+    match path with
+    | OutPort (sw1, RealPort pt1) :: (InPort (sw2, RealPort pt2) :: _ as path') ->
+       mk_seq (Link (sw1, pt1, sw2, pt2)) (policy_of_path path')
+    | OutPort (sw, Loop) :: (InPort (sw', _) :: _ as path') ->
+       assert (sw = sw');
+       policy_of_path path'
+    | InPort (sw, _) :: (OutPort (sw', RealPort pt) :: _ as path') ->
+       assert (sw = sw');
+       mk_seq (Mod (Location (Physical (pt)))) (policy_of_path path')
+    | InPort (sw, _) :: (OutPort (sw', Loop) :: _ as path') ->
+       assert (sw = sw');
+       policy_of_path path'
+    | _ -> id
+  in
+
+  let match_vloc' vv =
+    match G_virt.V.label vv with
+    | InPort (vsw, vpt) | OutPort (vsw, vpt) -> match_vloc (vsw, vpt)
+  in
+
+  let set_vloc' vv =
+    match G_virt.V.label vv with
+    | InPort (vsw, vpt) | OutPort (vsw, vpt) -> set_vloc (vsw, vpt)
+  in
+
+  let fabric_of_prod_edge v1 v2 ((out_fabric, in_fabric) as fabrics) =
+    match G_prod.V.label v1, G_prod.V.label v2 with
+    | InconsistentOut (vv, pv1), ConsistentOut (vv', pv2) ->
+       assert (vv = vv');
+       let path, _ = get_path_and_distance pv1 pv2 in
+       let fabric = mk_big_seq [match_vloc' vv; policy_of_path path; set_vloc' vv] in
+       (mk_union fabric out_fabric, in_fabric)
+    | InconsistentIn (vv, pv1), ConsistentOut (vv', pv2) ->
+       assert (vv = vv');
+       let path, _ = get_path_and_distance pv1 pv2 in
+       let fabric = mk_big_seq [match_vloc' vv; policy_of_path path; set_vloc' vv] in
+       (out_fabric, mk_union fabric in_fabric)
+    | _, _ -> fabrics
+  in
+
+  if List.exists (fun v -> visit v <> Ok) prod_ing then
+    failwith "Virtual Compiler: specification allows no valid faric"
+  else
+    G_prod.fold_edges fabric_of_prod_edge (get_ok_graph ()) (drop, drop)
 end
 
-module Dijkstra = Graph.Path.Dijkstra(G)(WEIGHT) *)
 
-let match_ploc (sw,pt) = Filter (And (Test(Switch sw), Test(Location(Physical(pt)))))
-let match_vloc (vsw,vpt) = Filter (And (Test(VSwitch vsw), Test(VPort vpt)))
-let set_vloc (vsw,vpt) = mk_seq (Mod (VSwitch vsw)) (Mod (VPort vpt))
 
-let generate_union (indices : 'a list) (f : 'a -> policy) =
-  mk_big_union (List.map f indices)
 
-let dedup xs =
-  xs |> Core.Core_list.of_list |> Core.Core_list.dedup |> Core.Core_list.to_list
 
-let get_vlocs (p : policy) =
-  let open Core.Std.List in
-  let rec get = function
-    | Filter (And (Test (VSwitch vsw), Test (VPort vpt))) -> [(vsw, vpt)]
-    | Filter _ | Mod _ | Link _ -> []
-    | Union (q, r) | Seq (q, r) -> (get q) @ (get r)
-    | Star q -> get q in
-  to_list (dedup (get p))
+
+
 
 (*
 
@@ -318,16 +510,14 @@ let get_vlocs (p : policy) =
 
 *)
 
-let compile (vpolicy : policy) (vtopo : policy) (vingress : policy)
-(out_fabric : policy) (in_fabric : policy) =
-  let fout = generate_union (get_vlocs out_fabric)
-    (fun vl -> mk_big_seq [match_vloc vl; out_fabric; set_vloc vl]) in
-  let fin = generate_union (get_vlocs in_fabric)
-    (fun vl -> mk_big_seq [match_vloc vl; in_fabric; set_vloc vl]) in
-  let ing = mk_seq vingress fin in
+let compile (vpolicy : policy) (vrel : pred)
+  (vtopo : policy) (ving_pol : policy) (ving : pred) (veg : pred)
+  (ptopo : policy)                     (ping : pred) (peg : pred) =
+  let (fout, fin) = generate_fabrics vtopo ving veg ptopo ving peg vrel in
+  let ing = mk_seq ving_pol (Filter ving) in
   let p = mk_seq vpolicy fout in
   let t = mk_seq vtopo fin in
-  (* ing; p; (t;p)^*  *)
-  mk_big_seq [ing; p; mk_star (mk_seq t p)]
+  (* ing; (p;t)^*; p  *)
+  mk_big_seq [ing; mk_star (mk_seq p t); p]
 
   

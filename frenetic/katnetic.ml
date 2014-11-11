@@ -50,33 +50,41 @@ module Global = struct
 end
 
 module Virtual = struct
-  let main vpolicy_file vtopo_file vingress_file pingress_file in_fabric_file out_fabric_file =
+  let main vpolicy_file vrel_file vtopo_file ving_pol_file ving_file veg_file
+                                  ptopo_file               ping_file peg_file =
     let fmt = Format.formatter_of_out_channel stderr in
-    let () = Format.pp_set_margin fmt 200 in
+    let () = Format.pp_set_margin fmt 120 in
     let vpolicy =
       Core.Std.In_channel.with_file vpolicy_file ~f:(fun chan ->
         NetKAT_Parser.program NetKAT_Lexer.token (Lexing.from_channel chan)) in
+    let vrel =
+      Core.Std.In_channel.with_file vrel_file ~f:(fun chan ->
+        NetKAT_Parser.predicate NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let vtopo =
       Core.Std.In_channel.with_file vtopo_file ~f:(fun chan ->
         NetKAT_Parser.program NetKAT_Lexer.token (Lexing.from_channel chan)) in
-    let vingress =
-      Core.Std.In_channel.with_file vingress_file ~f:(fun chan ->
+    let ving_pol =
+      Core.Std.In_channel.with_file ving_pol_file ~f:(fun chan ->
         NetKAT_Parser.program NetKAT_Lexer.token (Lexing.from_channel chan)) in
-    let pingress =
-      Core.Std.In_channel.with_file pingress_file ~f:(fun chan ->
+    let ving =
+      Core.Std.In_channel.with_file ving_file ~f:(fun chan ->
         NetKAT_Parser.predicate NetKAT_Lexer.token (Lexing.from_channel chan)) in
-    (* FIXME: egress shouldd not be hard coded *)
-    let pegress = NetKAT_Types.True in
-    let in_fabric =
-      Core.Std.In_channel.with_file in_fabric_file ~f:(fun chan ->
+    let veg =
+      Core.Std.In_channel.with_file veg_file ~f:(fun chan ->
+        NetKAT_Parser.predicate NetKAT_Lexer.token (Lexing.from_channel chan)) in
+    let ptopo =
+      Core.Std.In_channel.with_file ptopo_file ~f:(fun chan ->
         NetKAT_Parser.program NetKAT_Lexer.token (Lexing.from_channel chan)) in
-    let out_fabric =
-      Core.Std.In_channel.with_file out_fabric_file ~f:(fun chan ->
-        NetKAT_Parser.program NetKAT_Lexer.token (Lexing.from_channel chan)) in
+    let ping =
+      Core.Std.In_channel.with_file ping_file ~f:(fun chan ->
+        NetKAT_Parser.predicate NetKAT_Lexer.token (Lexing.from_channel chan)) in
+    let peg =
+      Core.Std.In_channel.with_file peg_file ~f:(fun chan ->
+        NetKAT_Parser.predicate NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let global_physical_pol =
-      NetKAT_VirtualCompiler.compile vpolicy vtopo vingress in_fabric out_fabric in
+      NetKAT_VirtualCompiler.compile vpolicy vrel vtopo ving_pol ving veg ptopo ping peg in
     let local_physical_pol =
-      NetKAT_GlobalCompiler.compile pingress pegress global_physical_pol in
+      NetKAT_GlobalCompiler.compile ping peg global_physical_pol in
     let tables =
       List.map
         (fun sw -> NetKAT_LocalCompiler.compile sw local_physical_pol
@@ -87,8 +95,8 @@ module Virtual = struct
       Format.fprintf fmt "[global] Flowtable for Switch %Ld:@\n@[%a@]@\n@\n"
         sw
         SDN_Types.format_flowTable t in
-    Format.fprintf fmt "[global] Parsed: @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @\n"
-      vpolicy_file vtopo_file vingress_file pingress_file in_fabric_file out_fabric_file;
+    Format.fprintf fmt "[global] Parsed: @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @\n"
+      vpolicy_file vrel_file vtopo_file ving_pol_file ving_file veg_file ptopo_file ping_file peg_file;
     Format.fprintf fmt "[global] Global Policy:@\n@[%a@]@\n"
       NetKAT_Pretty.format_policy global_physical_pol;
     Format.fprintf fmt "[global] CPS Policy:@\n@[%a@]@\n"
@@ -243,31 +251,43 @@ let global_cmd : unit Cmdliner.Term.t * Cmdliner.Term.info =
 
 let virtual_cmd : unit Cmdliner.Term.t * Cmdliner.Term.info =
   let doc = "invoke the virtual compiler and dump the resulting flow tables" in
-  let policy =
+  let vpolicy =
     let doc = "file containing the local virtual policy (containing no links)" in
-    Arg.(required & (pos 0 (some file) None) & info [] ~docv:"POLICY" ~doc)
+    Arg.(required & (pos 0 (some file) None) & info [] ~docv:"VPOLICY" ~doc)
   in
-  let topo =
+  let vrel =
+    let doc = "file containing the virtual relation" in
+    Arg.(required & (pos 1 (some file) None) & info [] ~docv:"VREL" ~doc)
+  in
+  let vtopo =
     let doc = "file containing the virtual topology" in
-    Arg.(required & (pos 1 (some file) None) & info [] ~docv:"TOPO" ~doc)
+    Arg.(required & (pos 2 (some file) None) & info [] ~docv:"VTOPO" ~doc)
   in
-  let vingress =
-    let doc = "file containing the virtual ingress" in
-    Arg.(required & (pos 2 (some file) None) & info [] ~docv:"VINGRESS" ~doc)
+  let ving_pol =
+    let doc = "file containing the virtual ingress policy" in
+    Arg.(required & (pos 3 (some file) None) & info [] ~docv:"VINGRESSPOL" ~doc)
   in
-  let pingress =
-    let doc = "file containing the physical ingress" in
-    Arg.(required & (pos 3 (some file) None) & info [] ~docv:"PINGRESS" ~doc)
+  let ving =
+    let doc = "file containing the virtual ingress predicate" in
+    Arg.(required & (pos 4 (some file) None) & info [] ~docv:"VINGRESS" ~doc)
   in
-  let out_fabric =
-    let doc = "file containing the out-fabric" in
-    Arg.(required & (pos 4 (some file) None) & info [] ~docv:"OUT-FABRIC" ~doc)
+  let veg =
+    let doc = "file containing the virtual eggress predicate" in
+    Arg.(required & (pos 5 (some file) None) & info [] ~docv:"VINGRESS" ~doc)
   in
-  let in_fabric =
-    let doc = "file containing the out-fabric" in
-    Arg.(required & (pos 5 (some file) None) & info [] ~docv:"IN-FABRIC" ~doc)
+  let ptopo =
+    let doc = "file containing the virtual topology" in
+    Arg.(required & (pos 6 (some file) None) & info [] ~docv:"PTOPO" ~doc)
   in
-  Term.(pure Virtual.main $ policy $ topo $ vingress $ pingress $ out_fabric $ in_fabric),
+  let ping =
+    let doc = "file containing the virtual ingress predicate" in
+    Arg.(required & (pos 7 (some file) None) & info [] ~docv:"PINGRESS" ~doc)
+  in
+  let peg =
+    let doc = "file containing the virtual eggress predicate" in
+    Arg.(required & (pos 8 (some file) None) & info [] ~docv:"PEGRESS" ~doc)
+  in
+  Term.(pure Virtual.main $ vpolicy $ vrel $ vtopo $ ving_pol $ ving $ veg $ ptopo $ ping $ peg),
   Term.info "virtual" ~doc
 
 let default_cmd : unit Cmdliner.Term.t * Cmdliner.Term.info =
