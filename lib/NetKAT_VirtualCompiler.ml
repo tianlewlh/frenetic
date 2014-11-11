@@ -11,12 +11,6 @@ let match_ploc (sw,pt) = Filter (And (Test(Switch sw), Test(Location(Physical(pt
 let match_vloc (vsw,vpt) = Filter (And (Test(VSwitch vsw), Test(VPort vpt)))
 let set_vloc (vsw,vpt) = mk_seq (Mod (VSwitch vsw)) (Mod (VPort vpt))
 
-let generate_union (indices : 'a list) (f : 'a -> policy) =
-  mk_big_union (List.map f indices)
-
-let dedup xs =
-  xs |> Core.Core_list.of_list |> Core.Core_list.dedup |> Core.Core_list.to_list
-
 (* node type *)
 type ('a, 'b) node_type =
   | InPort of 'a * 'b
@@ -26,6 +20,12 @@ type ('a, 'b) node_type =
 type extendedPort =
   | RealPort of portId
   | Loop of portId (* when looping, remember last port! *)
+
+(* marks for graph traversal *)
+type mark =
+  | Seen
+  | Ok
+  | NotOk
 
 let equal = (=)
 let hash = Hashtbl.hash
@@ -63,8 +63,7 @@ end) (Vlabel : Graph.Sig.COMPARABLE with type t = (Params.switch, Params.port) n
       let in_pt = G.V.create (InPort (sw, pt)) in
       let out_pt = G.V.create (OutPort (sw, pt)) in
       g |> add_vertex in_pt
-        |> add_vertex out_pt
-        |> add_edge in_pt out_pt in
+        |> add_vertex out_pt in
     let add_link (sw1, pt1, sw2, pt2) g =
       g |> add_loc (sw1, pt1)
         |> add_loc (sw2, pt2)
@@ -164,8 +163,7 @@ module Tbl = Core.Std.Hashtbl.Poly
 (* aux list functions *)
 let inters xs ys = List.find_all (fun x -> List.mem x ys) xs
 let product xs ys =
-  List.map (fun x -> List.fold_right (fun y xys -> (x,y)::xys) ys []) xs
-  |> List.flatten
+  List.fold_right (fun x l -> List.fold_right (fun y l -> (x,y)::l) ys l) xs []
 
 let parse_vrel (vrel : pred) =
   let rec parse_physical pred alist =
@@ -263,12 +261,8 @@ begin
 
 end
 
-type mark =
-  | Seen
-  | Ok
-  | NotOk
 
-let generate_fabrics v_topo v_ing v_eg p_topo p_ing p_eg vrel =
+let generate_fabrics vrel v_topo v_ing v_eg p_topo p_ing p_eg  =
 begin
   let vgraph = G_virt.make_graph v_ing v_eg v_topo in
   let pgraph = G_phys.make_graph p_ing p_eg p_topo in
@@ -307,26 +301,27 @@ begin
         | ConsistentOut _ | ConsistentIn _ -> List.for_all
         | InconsistentIn _ | InconsistentOut _ -> List.exists
       end in
+      (* SJS: ensure that this algorithm is actually correct; both Seen and Ok are accepted *)
       let mark = if check (fun v -> visit v <> NotOk) sucs then Ok else NotOk in
       Tbl.replace mark_tbl ~key:prod_vertex ~data:mark;
       mark
   in
 
-  let rec get_ok_graph' v ok_g =
-    if Tbl.find mark_tbl v = Some Ok && not (G_prod.mem_vertex ok_g v) then
-      let ok_g' = G_prod.add_vertex ok_g v in
-      let ok_g'' = G_prod.fold_succ get_ok_graph' prod_graph v ok_g' in
-      let add_edge v' g = G_prod.add_edge g v v' in
-      G_prod.fold_succ add_edge prod_graph v ok_g''
+  let rec get_winning_graph' src winning_g =
+    if Tbl.find mark_tbl src = Some Ok && not (G_prod.mem_vertex winning_g src) then
+      let winning_g' = G_prod.add_vertex winning_g src in
+      let winning_g'' = G_prod.fold_succ get_winning_graph' prod_graph src winning_g' in
+      let add_edge dst g = G_prod.add_edge g src dst in
+      G_prod.fold_succ add_edge prod_graph src winning_g''
     else
-      ok_g
+      winning_g
   in
 
-  let get_ok_graph () =
-    let ok_graph = List.fold_right get_ok_graph' prod_ing G_prod.empty in
-    Printf.printf "|V(ok_graph)|: %i\n" (G_prod.nb_vertex ok_graph);
-    Printf.printf "|E(ok_graph)|: %i\n" (G_prod.nb_edges ok_graph);
-    ok_graph
+  let get_winning_graph () =
+    let winning_graph = List.fold_right get_winning_graph' prod_ing G_prod.empty in
+    Printf.printf "|V(winning_graph)|: %i\n" (G_prod.nb_vertex winning_graph);
+    Printf.printf "|E(winning_graph)|: %i\n" (G_prod.nb_edges winning_graph);
+    winning_graph
   in
 
   let unwrap_e e = (G_phys.V.label (G_phys.E.src e), G_phys.V.label (G_phys.E.dst e)) in
@@ -359,7 +354,8 @@ begin
     | (InPort (sw, _), (OutPort (sw', Loop _))) :: path' ->
        assert (sw = sw');
        policy_of_path path'
-    | _ -> id
+    | [] -> id
+    | _ -> failwith "Virtual Compiler: bug in implementation"
   in
 
   let match_vloc' vv =
@@ -386,18 +382,20 @@ begin
        let fabric =
          mk_big_seq [match_vloc' vv; match_ploc' pv1; policy_of_path path; set_vloc' vv] in
        (mk_union fabric out_fabric, in_fabric)
-    | InconsistentIn (vv, pv1), ConsistentOut (vv', pv2) ->
+    | InconsistentIn (vv, pv1), ConsistentIn (vv', pv2) ->
        assert (vv = vv');
        let path, _ = get_path_and_distance pv1 pv2 in
-       let fabric = mk_big_seq [match_vloc' vv; policy_of_path path; set_vloc' vv] in
+       let fabric =
+         mk_big_seq [match_vloc' vv; match_ploc' pv1; policy_of_path path; set_vloc' vv] in
        (out_fabric, mk_union fabric in_fabric)
-    | _, _ -> fabrics
+    | ConsistentOut _, InconsistentIn _ | ConsistentIn _, InconsistentOut _ -> fabrics
+    | _ -> failwith "Virtual Compiler: invalid prduct graph"
   in
 
   if List.exists (fun v -> visit v <> Ok) prod_ing then
     failwith "Virtual Compiler: specification allows no valid faric"
   else
-    G_prod.fold_edges fabric_of_prod_edge (get_ok_graph ()) (drop, drop)
+    G_prod.fold_edges fabric_of_prod_edge (get_winning_graph ()) (drop, drop)
 end
 
 
@@ -462,7 +460,7 @@ end
 let compile (vpolicy : policy) (vrel : pred)
   (vtopo : policy) (ving_pol : policy) (ving : pred) (veg : pred)
   (ptopo : policy)                     (ping : pred) (peg : pred) =
-  let (fout, fin) = generate_fabrics vtopo ving veg ptopo ping peg vrel in
+  let (fout, fin) = generate_fabrics vrel vtopo ving veg ptopo ping peg in
   let ing = mk_seq ving_pol (Filter ving) in
   let p = mk_seq vpolicy fout in
   let t = mk_seq vtopo fin in
