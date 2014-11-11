@@ -25,7 +25,7 @@ type ('a, 'b) node_type =
 (* port wrapper *)
 type extendedPort =
   | RealPort of portId
-  | Loop
+  | Loop of portId (* when looping, remember last port! *)
 
 let equal = (=)
 let hash = Hashtbl.hash
@@ -121,9 +121,9 @@ module G_phys = struct
     let add_vertex v g = add_vertex g v in
     let add_edge v1 v2 g = add_edge g v1 v2 in
 
-    let add_loop sw g =
-      let inLoop = G.V.create (InPort (sw, Loop)) in
-      let outLoop = G.V.create (OutPort (sw, Loop)) in
+    let add_loop sw pt g =
+      let inLoop = G.V.create (InPort (sw, Loop pt)) in
+      let outLoop = G.V.create (OutPort (sw, Loop pt)) in
       let g = g |> add_vertex inLoop
                 |> add_vertex outLoop
                 |> add_edge inLoop outLoop
@@ -133,12 +133,10 @@ module G_phys = struct
 
     let install_loop v g =
       match V.label v with
-      | InPort (sw, _) ->
-         let _, outLoop, g = add_loop sw g in
+      | InPort (sw, RealPort pt) ->
+         let _, outLoop, g = add_loop sw pt g in
          add_edge v outLoop g
-      | OutPort (sw, _) ->
-         let _, _, g = add_loop sw g in
-         g
+      | _ -> g
     in
     fold_vertex install_loop g g
 end
@@ -415,13 +413,13 @@ begin
     match path with
     | OutPort (sw1, RealPort pt1) :: (InPort (sw2, RealPort pt2) :: _ as path') ->
        mk_seq (Link (sw1, pt1, sw2, pt2)) (policy_of_path path')
-    | OutPort (sw, Loop) :: (InPort (sw', _) :: _ as path') ->
+    | OutPort (sw, Loop _) :: (InPort (sw', _) :: _ as path') ->
        assert (sw = sw');
        policy_of_path path'
     | InPort (sw, _) :: (OutPort (sw', RealPort pt) :: _ as path') ->
        assert (sw = sw');
        mk_seq (Mod (Location (Physical (pt)))) (policy_of_path path')
-    | InPort (sw, _) :: (OutPort (sw', Loop) :: _ as path') ->
+    | InPort (sw, _) :: (OutPort (sw', Loop _) :: _ as path') ->
        assert (sw = sw');
        policy_of_path path'
     | _ -> id
@@ -434,9 +432,8 @@ begin
 
   let match_ploc' pv =
     match G_phys.V.label pv with
-    | InPort (sw, RealPort pt) | OutPort (sw, RealPort pt) -> match_ploc (sw, pt)
-    | _ -> failwith "Virtual Compiler: not implemented yet"
-    (* SJS: fuck! Loops require backwards search *)
+    | InPort (sw, RealPort pt) | OutPort (sw, RealPort pt)
+    | InPort (sw, Loop pt) | OutPort (sw, Loop pt) -> match_ploc (sw, pt)
   in
 
   let set_vloc' vv =
