@@ -296,59 +296,6 @@ begin
 
   let module Dijkstra = Graph.Path.Dijkstra(G_phys)(WEIGHT) in
 
-(*   let phys_of_prod_vert prod_vertex =
-    match G_prod.V.label prod_vertex with
-    | ConsistentIn (_, pv) | InconsistentOut (_, pv) | ConsistentOut (_, pv)
-    | InconsistentIn (_, pv) -> pv
-  in *)
-
- (*  let destruct_prod_v v =
-    match G_prod.V.label v with
-    | ConsistentIn (vv, pv) ->
-      begin match G_virt.V.label vv, G_phys.V.label pv with
-      | InPort (vsw, vpt), InPort (sw, pt) -> (vsw, vpt, sw, pt)
-      | _ -> assert false
-      end
-    | InconsistentOut (vv, pv) ->
-      begin match G_virt.V.label vv, G_phys.V.label pv with
-      | OutPort (vsw, vpt), InPort (sw, pt) -> (vsw, vpt, sw, pt)
-      | _ -> assert false
-      end
-    | ConsistentOut (vv, pv) ->
-      begin match G_virt.V.label vv, G_phys.V.label pv with
-      | OutPort (vsw, vpt), OutPort (sw, pt) -> (vsw, vpt, sw, pt)
-      | _ -> assert false
-      end
-    | InconsistentIn (vv, pv) ->
-      begin match G_virt.V.label vv, G_phys.V.label pv with
-      | InPort (vsw, vpt), OutPort (sw, pt) -> (vsw, vpt, sw, pt)
-      | _ -> assert false
-      end
-  in
-
-  let destruct_prod_e v1 v2 =
-    let (vsw1, vpt1, sw1, pt1) = destruct_prod_v v1 in
-    let (vsw2, vpt2, sw2, pt2) = destruct_prod_v v2 in
-    begin
-      match G_prod.V.label v1, G_prod.V.label v2 with
-      | ConsistentIn _, InconsistentOut _ ->
-         assert (sw1 = sw2);
-         assert (pt1 = pt2)
-      | InconsistentOut _, ConsistentOut _ ->
-         assert (vsw1 = vsw2);
-         assert (vpt1 = vpt2)
-      | ConsistentOut _, InconsistentIn _ ->
-         assert (sw1 = sw2);
-         assert (pt1 = pt2)
-      | InconsistentIn _, ConsistentIn _ ->
-         assert (vsw1 = vsw2);
-         assert (vpt1 = vpt2)
-      | _, _ ->
-         assert false
-    end;
-    (vsw1, vpt1, vsw2, vpt2, sw1, pt1, sw2, pt2)
-  in *)
-
   let unwrap_e e = (G_phys.V.label (G_phys.E.src e), G_phys.V.label (G_phys.E.dst e)) in
 
   let unwrap_path path =
