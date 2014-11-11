@@ -4,7 +4,6 @@
 import redis
 import sys
 
-
 # Stores a Redis hash of nodes
 class RedisNib:
 
@@ -84,7 +83,7 @@ class RedisNib:
         """
         # First make sure the node exists
         s = self.r.smembers('nodes') # return the set of all nodes
-        if n not in s:
+	if n not in s:
             return None
         return self.r.sadd('nodeports:'+n, p)
 
@@ -265,15 +264,32 @@ class RedisNib:
         # We must convert a set of concat'ed strings back in to tuples
         l = list(self.r.smembers('edges'))
         edgelist = []
-        for estr in l: # l = ['sw2:sw4', ....
-            if ':' not in estr:
-                print 'Error in parsing edge name' + str
-                return None
-            if len(l) is not 2:
-                print 'Error in parsing edge name list' + str
-                return None
-            pair = estr.split(':')
-            edgelist.append( (pair[0], pair[1]) )
+        patterns = ['(\\d+)(:)(\\d+)',          #sw-sw
+                    '(\\d+)(:)(h\\d+-\\d+)',    #sw-h
+                    '(h\\d+-\\d+)(:)(\\d+)']    #h-sw
+        
+        def extract_from_re(estr):
+            for p in patterns:
+                if re.match(p,estr) is not None:
+                    edge_re = re.compile(p)
+                    edge = edge_re.search(estr)
+                    assert edge.group(2) == ':'
+                    return (edge.group(1),edge.group(3))
+
+        for estr in l: # l = ['2:4', ....
+            edge = extract_from_re(estr)
+            assert edge is not None
+            edgelist.append((edge[0], edge[1]))
+
+         # for estr in l: # l = ['sw2:sw4', ....
+         #    if ':' not in estr:
+         #        print 'Error in parsing edge name' + str
+         #        return None
+         #    if len(l) is not 2:
+         #        print 'Error in parsing edge name list' + str
+         #        return None
+         #    pair = estr.split(':')
+
         return edgelist
 
     def remove_edge(self, u, v):

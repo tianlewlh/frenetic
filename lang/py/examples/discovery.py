@@ -5,6 +5,7 @@ from netkat.syntax import *
 import networkx as nx
 from networkx.readwrite import json_graph
 from ryu.ofproto.ether import ETH_TYPE_ARP
+import redisnib
 
 """Topology Discovery"""
 
@@ -22,10 +23,9 @@ from ryu.ofproto.ether import ETH_TYPE_ARP
 PROBE_INTERVAL = 5
 
 # (nb): Arbitrarily assigned ethtype to (switch) discovery packets
-# I will replace this and instead use LLDP
 ETH_TYPE_DISCOVERY_PACKET = 0x3366
 
-nib = nx.DiGraph()
+nib = redisnib.RedisNib()
 
 ##
 # Helper functions
@@ -54,48 +54,50 @@ def policy():
 def probe():
     print '=== PROBE ==='
     for node in nib.nodes():
-        if nib.node[node]['device'] == 'switch':
-            for port in nib.node[node]['ports']:
+        if(nib.node(str(node),'device') == 'switch'):
+	    for port in nib.node_ports(str(node)):
                 # (nb): NOTE: Force node,port into dst,src fields of Ethernet packet. Temporary only!
-                dp = ethernet.ethernet(dst=node,src=port,ethertype=0x3366)
+		dp = ethernet.ethernet(dst=int(node),src=int(port),ethertype=0x3366)
                 p = packet.Packet()
                 p.add_protocol(dp)
                 p.serialize()
-                webkat.pkt_out(node,port,p.data)
-    print nib.edges(data=True)
+                webkat.pkt_out(int(node),int(port),p.data)
+    print nib.edges() #(data=True)
     return
 
 class TopologyDiscovery(webkat.App):
     def switch_up(self,switch_id):
-	if nib.node.has_key(switch_id):
+	if(nib.node(str(switch_id)) is not None):
             pass
         else:
-            nib.add_node(switch_id,device='switch')
-            nib.node[switch_id]['ports'] = set()
+            nib.add_node(str(switch_id),device='switch')
+	    #nib.node[switch_id]['ports'] = set()
+	    #nib.node(switch_id,'ports') = set()
 	webkat.update(policy())
     def switch_down(self,switch_id):
-	nib.remove_node(switch_id)
+	nib.remove_node(str(switch_id))
 	webkat.update(policy())
     def port_up(self,switch_id,port_id):
-	nib.node[switch_id]['ports'].add(port_id)
+	#nib.node(switch_id,'ports').add(port_id)
+	nib.add_port(str(switch_id),str(port_id))
 	webkat.update(policy())
     def port_down(self,switch_id,port_id):
-	nib.node[switch_id]['ports'].remove(port_id)
+	#nib.node(str(switch_id),'ports').remove(str(port_id))
+	nib.del_port(str(switch_id),str(port_id))
 	webkat.update(policy())
     def packet_in(self,switch_id,port_id,packet):
 	p = get_ethernet(packet)
 	if p.ethertype == ETH_TYPE_ARP:
-	   # (nb): For now, assign a unique hostname concat of parent-switch:port
-	   host_id = "h%s" % (str(switch_id) + ":" + str(port_id))
-	   nib.add_node(host_id,device='host')
-	   nib.add_edge(switch_id,host_id,outport=port_id,inport=0)
-	   nib.add_edge(host_id,switch_id,outport=0,inport=port_id)
+           host_id = "h%s" % (str(switch_id) + "-" + str(port_id))
+	   nib.add_node(str(host_id),device='host')
+	   nib.add_edge(str(switch_id),str(host_id),outport=str(port_id),inport=str(0))
+	   nib.add_edge(str(host_id),str(switch_id),outport=str(0),inport=str(port_id))
         elif p.ethertype == ETH_TYPE_DISCOVERY_PACKET:
 	   # (nb): Remove ryu.packet's MAC string format
 	   src_sw = int((p.dst).replace(':',''),16)
    	   src_port = int((p.src).replace(':',''),16)
-   	   nib.add_edge(src_sw,switch_id,outport=src_port,inport=port_id)
-	   nib.add_edge(switch_id,src_sw,outport=port_id,inport=src_port)	
+   	   nib.add_edge(str(src_sw),str(switch_id),outport=str(src_port),inport=str(port_id))
+	   nib.add_edge(str(switch_id),str(src_sw),outport=str(port_id),inport=str(src_port))	
 	pass
 
 	# print "NIB: %s" % json_graph.node_link_data(nib)
