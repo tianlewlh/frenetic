@@ -1,6 +1,13 @@
 open NetKAT_Types
 open Optimize
 
+module Tbl = Core.Std.Hashtbl.Poly
+
+(* aux list functions *)
+let inters xs ys = List.find_all (fun x -> List.mem x ys) xs
+let product xs ys =
+  List.fold_right (fun x l -> List.fold_right (fun y l -> (x,y)::l) ys l) xs []
+
 (* physical location *)
 type ploc = switchId * portId
 
@@ -56,21 +63,24 @@ end) (Vlabel : Graph.Sig.COMPARABLE with type t = (Params.switch, Params.port) n
   module G = Graph.Persistent.Digraph.Concrete(Vlabel)
   include G
 
-  let make_graph (ingress : pred) (egress : pred) (topo : policy) =
-    let add_vertex v g = add_vertex g v in
-    let add_edge v1 v2 g = add_edge g v1 v2 in
-    let add_loc (sw, pt) g =
-      let in_pt = G.V.create (InPort (sw, pt)) in
-      let out_pt = G.V.create (OutPort (sw, pt)) in
-      g |> add_vertex in_pt
-        |> add_vertex out_pt in
-    let add_link (sw1, pt1, sw2, pt2) g =
+  let add_vertex' v g = add_vertex g v
+  let add_edge' v1 v2 g = add_edge g v1 v2
+
+  let add_loc (sw, pt) g =
+    let in_pt = G.V.create (InPort (sw, pt)) in
+    let out_pt = G.V.create (OutPort (sw, pt)) in
+    g |> add_vertex' in_pt
+      |> add_vertex' out_pt
+
+  let add_link (sw1, pt1, sw2, pt2) g =
       g |> add_loc (sw1, pt1)
         |> add_loc (sw2, pt2)
-        |> add_edge (G.V.create (OutPort (sw1, pt1))) (G.V.create (InPort (sw2, pt2))) in
+        |> add_edge' (G.V.create (OutPort (sw1, pt1))) (G.V.create (InPort (sw2, pt2)))
+
+  let make_graph (ingress : pred) (egress : pred) (topo : policy) =
     let connect_switch_ports' v1 v2 g =
       match V.label v1, V.label v2 with
-      | InPort (sw, _), OutPort (sw', _) when sw=sw' -> add_edge v1 v2 g
+      | InPort (sw, _), OutPort (sw', _) when sw=sw' -> add_edge' v1 v2 g
       | _ -> g in
     let connect_switch_ports g =
       fold_vertex (fun v1 g' -> fold_vertex (fun v2 g' -> connect_switch_ports' v1 v2 g') g g') g g
@@ -117,16 +127,14 @@ module G_phys = struct
 
   let make_graph (ingress : pred) (egress : pred) (topo : policy) =
     let g = make_graph ingress egress topo in
-    let add_vertex v g = add_vertex g v in
-    let add_edge v1 v2 g = add_edge g v1 v2 in
 
     let add_loop sw pt g =
       let inLoop = G.V.create (InPort (sw, Loop pt)) in
       let outLoop = G.V.create (OutPort (sw, Loop pt)) in
-      let g = g |> add_vertex inLoop
-                |> add_vertex outLoop
-                |> add_edge inLoop outLoop
-                |> add_edge outLoop inLoop in
+      let g = g |> add_vertex' inLoop
+                |> add_vertex' outLoop
+                |> add_edge' inLoop outLoop
+                |> add_edge' outLoop inLoop in
       (inLoop, outLoop, g)
     in
 
@@ -134,7 +142,7 @@ module G_phys = struct
       match V.label v with
       | InPort (sw, RealPort pt) ->
          let _, outLoop, g = add_loop sw pt g in
-         add_edge v outLoop g
+         add_edge' v outLoop g
       | _ -> g
     in
     fold_vertex install_loop g g
@@ -156,14 +164,11 @@ module V_prod = struct
   let hash = hash
 end
 
-module G_prod = Graph.Persistent.Digraph.Concrete(V_prod)
-
-module Tbl = Core.Std.Hashtbl.Poly
-
-(* aux list functions *)
-let inters xs ys = List.find_all (fun x -> List.mem x ys) xs
-let product xs ys =
-  List.fold_right (fun x l -> List.fold_right (fun y l -> (x,y)::l) ys l) xs []
+module G_prod = struct
+  include Graph.Persistent.Digraph.Concrete(V_prod)
+  let add_vertex' v g = add_vertex g v
+  let add_edge' v1 v2 g = add_edge g v1 v2
+end
 
 let parse_vrel (vrel : pred) =
   let rec parse_physical pred alist =
@@ -188,9 +193,9 @@ let parse_vrel (vrel : pred) =
 let make_product_graph (vgraph : G_virt.t) (pgraph : G_phys.t) (ving : pred) (vrel : pred) =
 begin
 
-  let vrel = parse_vrel vrel in
+  let vrel_tbl = parse_vrel vrel in
 
-  let vrel (vsw, vpt) = Tbl.find vrel (vsw, vpt) |> Core.Std.Option.value ~default:[] in
+  let vrel (vsw, vpt) = Tbl.find vrel_tbl (vsw, vpt) |> Core.Std.Option.value ~default:[] in
 
   let vrel' vvertex =
     match G_virt.V.label vvertex with
@@ -245,7 +250,9 @@ begin
 
   let rec make work_list edges g =
     begin match work_list with
-    | [] -> List.fold_left (fun g (v1, v2) -> G_prod.add_edge g v1 v2) g edges
+    | [] ->
+       (* add edges after all vertices are inserted *)
+       List.fold_left (fun g (v1, v2) -> G_prod.add_edge g v1 v2) g edges
     | v::vs ->
        if G_prod.mem_vertex g v then
          make vs edges g
@@ -282,6 +289,8 @@ begin
   let module WEIGHT = struct
     type label = unit
     type t = int
+    (* SJS: ideally, we should give loops weight 0, but this requires adding appropriate labels
+       to the edges *)
     let weight _ = 1
     let compare = compare
     let add x y = x + y
@@ -295,6 +304,7 @@ begin
     | Some mark -> mark (* already visited *)
     | None ->
       let () = Tbl.replace mark_tbl ~key:prod_vertex ~data:Seen in
+      (* SJS: We can order sucs, for example by distance, to obtain a greedy algorithm *)
       let sucs = G_prod.succ prod_graph prod_vertex in
       let check = begin
         match prod_vertex with
@@ -309,10 +319,9 @@ begin
 
   let rec get_winning_graph' src winning_g =
     if Tbl.find mark_tbl src = Some Ok && not (G_prod.mem_vertex winning_g src) then
-      let winning_g' = G_prod.add_vertex winning_g src in
-      let winning_g'' = G_prod.fold_succ get_winning_graph' prod_graph src winning_g' in
-      let add_edge dst g = G_prod.add_edge g src dst in
-      G_prod.fold_succ add_edge prod_graph src winning_g''
+      G_prod.add_vertex' src winning_g
+      |> G_prod.fold_succ get_winning_graph' prod_graph src
+      |> G_prod.fold_succ (G_prod.add_edge' src) prod_graph src
     else
       winning_g
   in
