@@ -1,2 +1,0 @@
-(EthType=0x800; vswitch:=1; vport:=1) +
-(!EthType=0x800; vswitch:=2; vport:=1)

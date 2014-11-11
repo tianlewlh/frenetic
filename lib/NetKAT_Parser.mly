@@ -225,7 +225,7 @@ xpolicy:
       { drop }
   | int64_value AT int32_value DBLARROW int64_value AT int32_value
       { Link($1, $3, $5, $7) }
-  | int64_value AT int64_value DBLARROW int64_value AT int64_value
+  | int64_value AT int64_value DBLARROWDBLHEAD int64_value AT int64_value
       { VLink($1, $3, $5, $7) }
   | LPAREN policy RPAREN 
       { $2 }

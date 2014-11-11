@@ -95,13 +95,13 @@ module Virtual = struct
       Format.fprintf fmt "[global] Flowtable for Switch %Ld:@\n@[%a@]@\n@\n"
         sw
         SDN_Types.format_flowTable t in
-    Format.fprintf fmt "[global] Parsed: @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @\n"
+    Format.fprintf fmt "@\n[global] Parsed: @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @[%s@] @\n@\n"
       vpolicy_file vrel_file vtopo_file ving_pol_file ving_file veg_file ptopo_file ping_file peg_file;
-    Format.fprintf fmt "[global] Global Policy:@\n@[%a@]@\n"
+    Format.fprintf fmt "[global] Global Policy:@\n@[%a@]@\n@\n"
       NetKAT_Pretty.format_policy global_physical_pol;
-    Format.fprintf fmt "[global] CPS Policy:@\n@[%a@]@\n"
+    Format.fprintf fmt "[global] CPS Policy:@\n@[%a@]@\n@\n"
       NetKAT_Pretty.format_policy local_physical_pol;
-    Format.fprintf fmt "[global] Localized CPS Policies:@\n";
+    Format.fprintf fmt "[global] Localized CPS Policies:@\n@\n";
     List.iter print_table tables;
     ()
 end

@@ -89,7 +89,7 @@ module G_virt = MakeGraph (struct
     match pred with
     | And (Test (VSwitch vsw), Test (VPort vpt)) -> [(vsw, vpt)]
     | Or (p1, p2) -> locs_from_pred p1 @ locs_from_pred p2
-    | _ -> failwith "Virtual Compiler: not a valid ingress/egress predicate"
+    | _ -> failwith "Virtual Compiler: not a valid virtual ingress/egress predicate"
   let rec links_from_topo vtopo =
     match vtopo with
     | VLink (vsw1,vpt1,vsw2,vpt2) -> [(vsw1,vpt1,vsw2,vpt2)]
@@ -106,14 +106,16 @@ module G_phys = struct
       match pred with
       | And (Test (Switch sw), Test (Location (Physical pt))) -> [(sw, RealPort pt)]
       | Or (p1, p2) -> locs_from_pred p1 @ locs_from_pred p2
-      | _ -> failwith "Virtual Compiler: not a valid ingress/egress predicate"
+      | _ ->
+        Printf.printf "\npredicate: %s\n" (NetKAT_Pretty.string_of_pred pred);
+        failwith "Virtual Compiler: not a valid physical ingress/egress predicate"
     let rec links_from_topo topo =
       match topo with
       | Link (sw1,pt1,sw2,pt2) -> [(sw1, RealPort pt1, sw2, RealPort pt2)]
       | Union (t1, t2) -> links_from_topo t1 @ links_from_topo t2
-      | _ -> failwith "Virtual Compiler: not a valid virtual topology"
+      | _ -> failwith "Virtual Compiler: not a valid physical topology"
   end) (V_phys)
-  
+
   let make_graph (ingress : pred) (egress : pred) (topo : policy) =
     let g = make_graph ingress egress topo in
     let add_vertex v g = add_vertex g v in
@@ -273,6 +275,14 @@ begin
   let vgraph = G_virt.make_graph v_ing v_eg v_topo in
   let pgraph = G_phys.make_graph p_ing p_eg p_topo in
   let prod_ing, prod_graph = make_product_graph vgraph pgraph v_ing vrel in
+  let () = begin
+    Printf.printf "|V(vgraph)|: %i\n" (G_virt.nb_vertex vgraph);
+    Printf.printf "|E(vgraph)|: %i\n" (G_virt.nb_edges vgraph);
+    Printf.printf "|V(pgraph)|: %i\n" (G_phys.nb_vertex pgraph);
+    Printf.printf "|E(pgraph)|: %i\n" (G_phys.nb_edges pgraph);
+    Printf.printf "|V(prod_graph)|: %i\n" (G_prod.nb_vertex prod_graph);
+    Printf.printf "|E(prod_graph)|: %i\n" (G_prod.nb_edges prod_graph);
+  end in
 
   let mark_tbl = Tbl.create () in
   let dist_tbl = Tbl.create () in
@@ -335,7 +345,7 @@ begin
       | InconsistentIn _, ConsistentIn _ ->
          assert (vsw1 = vsw2);
          assert (vpt1 = vpt2)
-      | _, _ -> 
+      | _, _ ->
          assert false
     end;
     (vsw1, vpt1, vsw2, vpt2, sw1, pt1, sw2, pt2)
@@ -348,7 +358,7 @@ begin
       match vpath with
       | [] -> []
       | [(v1, v2)] -> [v1; v2]
-      | (v1, v2) :: ((v2', v3) :: _ as vpath') -> 
+      | (v1, v2) :: ((v2', v3) :: _ as vpath') ->
          assert (v2 = v2');
          v1 :: dedup vpath' in
     dedup (List.map unwrap_e path)
@@ -371,17 +381,20 @@ begin
   in
 
   let rec get_ok_graph' v ok_g =
-    if Tbl.find mark_tbl v = Some Ok then
+    if Tbl.find mark_tbl v = Some Ok && not (G_prod.mem_vertex ok_g v) then
       let ok_g' = G_prod.add_vertex ok_g v in
       let ok_g'' = G_prod.fold_succ get_ok_graph' prod_graph v ok_g' in
-      let add_edge v' g = G_prod.add_edge g v v' in 
-      G_prod.fold_succ add_edge ok_g'' v ok_g''
+      let add_edge v' g = G_prod.add_edge g v v' in
+      G_prod.fold_succ add_edge prod_graph v ok_g''
     else
       ok_g
   in
 
   let get_ok_graph () =
-    List.fold_right get_ok_graph' prod_ing G_prod.empty
+    let ok_graph = List.fold_right get_ok_graph' prod_ing G_prod.empty in
+    Printf.printf "|V(ok_graph)|: %i\n" (G_prod.nb_vertex ok_graph);
+    Printf.printf "|E(ok_graph)|: %i\n" (G_prod.nb_edges ok_graph);
+    ok_graph
   in
 
   let get_path_and_distance pv1 pv2 =
@@ -419,6 +432,13 @@ begin
     | InPort (vsw, vpt) | OutPort (vsw, vpt) -> match_vloc (vsw, vpt)
   in
 
+  let match_ploc' pv =
+    match G_phys.V.label pv with
+    | InPort (sw, RealPort pt) | OutPort (sw, RealPort pt) -> match_ploc (sw, pt)
+    | _ -> failwith "Virtual Compiler: not implemented yet"
+    (* SJS: fuck! Loops require backwards search *)
+  in
+
   let set_vloc' vv =
     match G_virt.V.label vv with
     | InPort (vsw, vpt) | OutPort (vsw, vpt) -> set_vloc (vsw, vpt)
@@ -429,7 +449,8 @@ begin
     | InconsistentOut (vv, pv1), ConsistentOut (vv', pv2) ->
        assert (vv = vv');
        let path, _ = get_path_and_distance pv1 pv2 in
-       let fabric = mk_big_seq [match_vloc' vv; policy_of_path path; set_vloc' vv] in
+       let fabric =
+         mk_big_seq [match_vloc' vv; match_ploc' pv1; policy_of_path path; set_vloc' vv] in
        (mk_union fabric out_fabric, in_fabric)
     | InconsistentIn (vv, pv1), ConsistentOut (vv', pv2) ->
        assert (vv = vv');
@@ -444,12 +465,6 @@ begin
   else
     G_prod.fold_edges fabric_of_prod_edge (get_ok_graph ()) (drop, drop)
 end
-
-
-
-
-
-
 
 
 (*
@@ -513,11 +528,16 @@ end
 let compile (vpolicy : policy) (vrel : pred)
   (vtopo : policy) (ving_pol : policy) (ving : pred) (veg : pred)
   (ptopo : policy)                     (ping : pred) (peg : pred) =
-  let (fout, fin) = generate_fabrics vtopo ving veg ptopo ving peg vrel in
+  let (fout, fin) = generate_fabrics vtopo ving veg ptopo ping peg vrel in
   let ing = mk_seq ving_pol (Filter ving) in
   let p = mk_seq vpolicy fout in
   let t = mk_seq vtopo fin in
   (* ing; (p;t)^*; p  *)
+  Printf.printf "ing: %s\n" (NetKAT_Pretty.string_of_policy ing);
+  Printf.printf "fout: %s\n" (NetKAT_Pretty.string_of_policy fout);
+  Printf.printf "fin: %s\n" (NetKAT_Pretty.string_of_policy fin);
+  Printf.printf "vpolicy: %s\n" (NetKAT_Pretty.string_of_policy vpolicy);
+  Printf.printf "vtopo: %s\n" (NetKAT_Pretty.string_of_policy vtopo);
   mk_big_seq [ing; mk_star (mk_seq p t); p]
 
   
