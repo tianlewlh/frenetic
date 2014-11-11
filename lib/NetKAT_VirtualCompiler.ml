@@ -346,11 +346,6 @@ begin
     end
   in
 
-  let pt_of_extended expt =
-    match expt with
-    | RealPort pt | Loop pt -> pt
-  in
-
   let rec policy_of_path path =
     match path with
     | (OutPort (sw1, RealPort pt1), (InPort (sw2, RealPort pt2))) :: path' ->
@@ -358,12 +353,9 @@ begin
     | (OutPort (sw, Loop _), (InPort (sw', _))) :: path' ->
        assert (sw = sw');
        policy_of_path path'
-    | (InPort (sw, expt), (OutPort (sw', RealPort pt))) :: path' ->
+    | (InPort (sw, _), (OutPort (sw', RealPort pt))) :: path' ->
        assert (sw = sw');
-       if pt_of_extended expt = pt then
-         policy_of_path path'
-       else
-         mk_seq (Mod (Location (Physical (pt)))) (policy_of_path path')
+       mk_seq (Mod (Location (Physical (pt)))) (policy_of_path path')
     | (InPort (sw, _), (OutPort (sw', Loop _))) :: path' ->
        assert (sw = sw');
        policy_of_path path'
