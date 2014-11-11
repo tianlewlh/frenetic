@@ -296,19 +296,6 @@ begin
 
   let module Dijkstra = Graph.Path.Dijkstra(G_phys)(WEIGHT) in
 
-  let unwrap_e e = (G_phys.V.label (G_phys.E.src e), G_phys.V.label (G_phys.E.dst e)) in
-
-  let unwrap_path path =
-    let rec dedup vpath =
-      match vpath with
-      | [] -> []
-      | [(v1, v2)] -> [v1; v2]
-      | (v1, v2) :: ((v2', v3) :: _ as vpath') ->
-         assert (v2 = v2');
-         v1 :: dedup vpath' in
-    dedup (List.map unwrap_e path)
-  in
-
   let rec visit prod_vertex =
     match Tbl.find mark_tbl prod_vertex with
     | Some mark -> mark (* already visited *)
@@ -342,6 +329,9 @@ begin
     ok_graph
   in
 
+  let unwrap_e e = (G_phys.V.label (G_phys.E.src e), G_phys.V.label (G_phys.E.dst e)) in
+  let unwrap_path path = List.map unwrap_e path in
+
   let get_path_and_distance pv1 pv2 =
     match Tbl.find dist_tbl (pv1, pv2) with
     | Some (path, dist) -> (path, dist)
@@ -358,15 +348,15 @@ begin
 
   let rec policy_of_path path =
     match path with
-    | OutPort (sw1, RealPort pt1) :: (InPort (sw2, RealPort pt2) :: _ as path') ->
+    | (OutPort (sw1, RealPort pt1), (InPort (sw2, RealPort pt2))) :: path' ->
        mk_seq (Link (sw1, pt1, sw2, pt2)) (policy_of_path path')
-    | OutPort (sw, Loop _) :: (InPort (sw', _) :: _ as path') ->
+    | (OutPort (sw, Loop _), (InPort (sw', _))) :: path' ->
        assert (sw = sw');
        policy_of_path path'
-    | InPort (sw, _) :: (OutPort (sw', RealPort pt) :: _ as path') ->
+    | (InPort (sw, _), (OutPort (sw', RealPort pt))) :: path' ->
        assert (sw = sw');
        mk_seq (Mod (Location (Physical (pt)))) (policy_of_path path')
-    | InPort (sw, _) :: (OutPort (sw', Loop _) :: _ as path') ->
+    | (InPort (sw, _), (OutPort (sw', Loop _))) :: path' ->
        assert (sw = sw');
        policy_of_path path'
     | _ -> id
