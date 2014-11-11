@@ -1,5 +1,34 @@
-"""Base class for redis nib. Meant as a drop-in replacement for
-   several functions from networkx-1.9.1/networkx/classes/digraph.py """
+"""
+Base class for redis nib. Meant as a drop-in replacement for
+several functions from networkx-1.9.1/networkx/classes/digraph.py
+
+
+Current Schema:  (note that some attributes are application-specific)
+-------------------------------------------------------------------------------
+Key Name         | Redis Data Structure + Attribs
+-------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
+"nodes"          | Set of all nodes in graph.  Node names stored as a string.
+                 | (one "nodes" key per graph)
+-----------------|-------------------------------------------------------------
+"edges"          | Set of all edges in graph. Stored as concat of string names,
+                 | with colon, such as "u:v".  (one "edges" key per graph)
+-----------------|-------------------------------------------------------------
+"nodeports:(n)"  | Set of all ports for a node with name "n".
+                 | (one key per node)
+-----------------|-------------------------------------------------------------
+"nodeattr:(n)"   | Hash of variable node attributes for node "n".
+                 | (one key per node, if attributes exist.)
+                 |   - For discovery.py, these attributes are currently:
+                 |     - "device" -> ("switch" or "host")
+-----------------|-------------------------------------------------------------
+"edgesattr:(u:v)"| Hash of variable edge attributes for directed edge from
+                 | node "u" to node "v".  (one key per edge)
+                 |   - For discovery.py, these attributes are currently:
+                 |     - "inport" -> (input port)
+                 |     - "outport" -> (output port)
+-----------------|-------------------------------------------------------------
+"""
 
 import redis
 import sys
