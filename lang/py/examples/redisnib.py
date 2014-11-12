@@ -189,7 +189,7 @@ class RedisNib:
         self.r.srem('nodes', n)
         # Remove node attributes, if they exist
         self.r.delete('nodeattr:'+n)
-        # TODO (ks): remove set of ports for each host when it exists.
+        self.r.delete('nodeports:'+n)
 
     def nodes(self):
         """ Return a list of all the nodes. """
@@ -397,6 +397,12 @@ def test_ports(nib):
     assert (nib.del_port('sw1', 80) == 1), 'Failed to delete port 80'
     assert (nib.r.sismember('nodeports:sw1', 80) == False), \
        'Failed to delete port 80 from set sw1'
+
+    # test that deleting a node deletes its ports
+    nib.add_port('sw1', 443)
+    assert (nib.r.sismember('nodeports:sw1', 443) == True), 'Failed to add port'
+    nib.remove_node('sw1')
+    assert (nib.r.get('nodeports:sw1') is None), 'Failed to delete portlist'
 
 def test_add_del_edges(nib):
     # setup
