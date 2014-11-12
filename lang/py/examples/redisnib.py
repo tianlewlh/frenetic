@@ -285,7 +285,7 @@ class RedisNib:
             return None
         else:
             if attr_lookup is not None:
-                # The node exists. Now lookup the requested attributes
+                # The edge exists. Now lookup the requested attributes
                 return self.r.hget('edgeattr:'+edgename, attr_lookup)
             else:
                 return edgename
