@@ -33,7 +33,7 @@ Key Name         | JSON Object or Array
 "edgeattr:(u:v)" | JSON object of variable edge attributes for directed edge
                  | from node "u" to node "v".  (one key per edge)
                  | - For discovery.py, these attributes are defined as:
-                 |      edgeattr: { "inport": "80", "outport": "6379" }
+                 |      edgeattr: { "inport": 80, "outport": 8675}
 -----------------|-------------------------------------------------------------
 
 """
