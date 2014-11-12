@@ -4,7 +4,7 @@ several functions from networkx-1.9.1/networkx/classes/digraph.py
 
 Redis Data Structures version.
 
-Current Schema:  (note that node/edge attributes are application-specific, 
+Current Schema:  (note that node/edge attributes are application-specific,
                   as defined by each application's logic/usage.)
 -------------------------------------------------------------------------------
 Key Name         | Redis Data Structure + Attribs
@@ -126,13 +126,11 @@ class RedisNib:
         s = self.r.smembers('nodes') # return the set of all nodes
         if n not in s:
             return None
-        return self.r.srem('nodeports:'+n, p)
+        return self.r.srem('nodeports:'+n, str(p))
 
     def node_ports(self, n):
         """
-        TODO/WARNING: Returns a set of _strings_ not ints.  Which is preferred?
-
-        Return the set of all ports (as strings) for node n, or empty set
+        Return the set of all ports (as ints) for node n, or empty set
         ([]) if no ports found.
 
         Example:
@@ -140,7 +138,11 @@ class RedisNib:
         >>> #replaces "for port in nib.node[node]['ports']:"
 
         """
-        return self.r.smembers('nodeports:'+n)
+        port_strings = self.r.smembers('nodeports:'+n)
+        port_ints = set()
+        for p in port_strings:
+            port_ints.add(int(p))
+        return port_ints
 
     def node(self, n, attr_lookup=None):
         """
@@ -267,7 +269,7 @@ class RedisNib:
 
         Example:
 
-         >>> if(nib.edge('sw2', 'sw4', 'outport') == '8675'): # test attrib
+         >>> if(nib.edge('sw2', 'sw4', 'outport') == 8675): # test attrib
          >>>     # .....something
          >>> nib.edge('sw1', 'sw2') is not None) # test for edge presence
 
@@ -286,7 +288,11 @@ class RedisNib:
         else:
             if attr_lookup is not None:
                 # The edge exists. Now lookup the requested attributes
-                return self.r.hget('edgeattr:'+edgename, attr_lookup)
+                lookup = self.r.hget('edgeattr:'+edgename, attr_lookup)
+                if(lookup.isdigit()): # Parse strings back to ints
+                    return int(lookup)
+                else:
+                    return lookup
             else:
                 return edgename
 
@@ -390,8 +396,15 @@ def test_ports(nib):
         'Failed to return None for adding port to fake switch'
 
     # test returning the set of nodes
-    assert (nib.node_ports('sw1') == set(['80'])),\
+    assert (nib.node_ports('sw1') == set([80])),\
         'Found unexpected set of ports for sw1'
+
+    # test for returning a set of the ports
+    assert (nib.add_port('sw1', 443) == 1), 'Failed add new port 443'
+    p = [80, 443 ]
+    # convert to sets for comparison of two (unordered) lists
+    assert (nib.node_ports('sw1') == set(p)) is True, \
+        'Failed to get correct set of ports for sw1'
 
     # test deleting a port
     assert (nib.del_port('sw1', 80) == 1), 'Failed to delete port 80'
@@ -420,9 +433,9 @@ def test_add_del_edges(nib):
     # assert basic edge add
     assert (nib.r.sismember('edges', 'sw1:sw2') is True), \
         'Failed to add edge sw1:sw2'
-    # assert that device attributes set for sw2->sw4
-    assert (nib.r.hget('edgeattr:sw2:sw4', 'outport') ==
-       '8675'), 'Failed to set edge attrib'
+    # assert that device attributes set for sw2->sw4 pulled directly from redis
+    assert (int(nib.r.hget('edgeattr:sw2:sw4', 'outport')) ==
+       8675), 'Failed to set edge attrib'
 
     nib.edges()
     # Test remove edge:
@@ -450,7 +463,7 @@ def test_get_edges(nib):
     # test that you can lookup an expected edge without attributes
     assert (nib.edge('sw1', 'sw2') is not None), 'Couldn\'t find edge sw1->sw2'
     # test for correct attribute setting
-    assert (nib.edge('sw2', 'sw4', 'outport') == '8675'), \
+    assert (nib.edge('sw2', 'sw4', 'outport') == 8675), \
         'Error getting  edge attrib outport for sw2->sw4'
 
 def main():
