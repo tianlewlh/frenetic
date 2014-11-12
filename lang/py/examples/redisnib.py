@@ -2,8 +2,10 @@
 Base class for redis nib. Meant as a drop-in replacement for
 several functions from networkx-1.9.1/networkx/classes/digraph.py
 
+Redis Data Structures version.
 
-Current Schema:  (note that some attributes are application-specific)
+Current Schema:  (note that node/edge attributes are application-specific, 
+                  as defined by each application's logic/usage.)
 -------------------------------------------------------------------------------
 Key Name         | Redis Data Structure + Attribs
 -------------------------------------------------------------------------------
@@ -19,10 +21,11 @@ Key Name         | Redis Data Structure + Attribs
 -----------------|-------------------------------------------------------------
 "nodeattr:(n)"   | Hash of variable node attributes for node "n".
                  | (one key per node, if attributes exist.)
+                 | Attributes determined/set by app logic.
                  |   - For discovery.py, these attributes are currently:
                  |     - "device" -> ("switch" or "host")
 -----------------|-------------------------------------------------------------
-"edgesattr:(u:v)"| Hash of variable edge attributes for directed edge from
+"edgeattr:(u:v)" | Hash of variable edge attributes for directed edge from
                  | node "u" to node "v".  (one key per edge)
                  |   - For discovery.py, these attributes are currently:
                  |     - "inport" -> (input port)
