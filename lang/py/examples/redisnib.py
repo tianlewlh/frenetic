@@ -191,7 +191,12 @@ class RedisNib:
         self.r.srem('nodes', n)
         # Remove node attributes, if they exist
         self.r.delete('nodeattr:'+n)
+        # Remove node ports, if they exist
         self.r.delete('nodeports:'+n)
+        # TODO: optimize
+        for e in self.edges():
+            if((e[0] == n) or (e[1] == n)): 
+                self.remove_edge(e[0], e[1])
 
     def nodes(self):
         """ Return a list of all the nodes. """
@@ -422,6 +427,8 @@ def test_add_del_edges(nib):
     nib.r.flushall() # wipe previous
     nib.add_edge('sw1','sw2')
     nib.add_edge('sw2','sw4',outport=8675,inport=80)
+    nib.add_edge('sw1','sw5')
+    nib.add_edge('sw5','sw2')
 
     # Test that adding edge adds both nodes
     assert (nib.node('sw1') is not None), 'Couldn\'t find node sw1 (add edge)'
@@ -429,7 +436,7 @@ def test_add_del_edges(nib):
 
     # Test add edge:
     # assert that the count for set 'edges' is 2.
-    assert (nib.r.scard('edges') == 2), 'Failed to add nodes'
+    assert (nib.r.scard('edges') == 4), 'Failed to add nodes'
     # assert basic edge add
     assert (nib.r.sismember('edges', 'sw1:sw2') is True), \
         'Failed to add edge sw1:sw2'
@@ -437,7 +444,17 @@ def test_add_del_edges(nib):
     assert (int(nib.r.hget('edgeattr:sw2:sw4', 'outport')) ==
        8675), 'Failed to set edge attrib'
 
-    nib.edges()
+    # Test that there are no dangling edges after a node is removed
+    assert(nib.r.sismember('edges', 'sw1:sw5') is True), \
+        'Failed to add edge 1:5 for node sw5'
+    assert(nib.r.sismember('edges', 'sw5:sw2') is True), \
+        'Failed to add edge 5:2 for node sw5'
+    nib.remove_node('sw5')
+    assert(nib.r.sismember('edges', 'sw1:sw5') is False), \
+        'Failed to delete edge 1:5 for deleted node sw5'
+    assert(nib.r.sismember('edges', 'sw5:sw2') is False), \
+        'Failed to delete edge 5:2 for deleted node sw5'
+
     # Test remove edge:
     nib.remove_edge('sw1', 'sw2')
     assert (nib.r.sismember('nodes', 'sw1:sw2') is False), \
