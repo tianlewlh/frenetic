@@ -351,8 +351,7 @@ def test_add_del_node(nib):
     # Test remove:
     nib.remove_node('sw1')
     assert (nib.r.sismember('nodes', 'sw1') is False), 'Failed to delete sw1'
-    nib.remove_node('sw2')
-    assert (nib.r.exists('nodeattr:sw1') is False), 'Failed to del sw2 attrib'
+    assert (nib.r.exists('nodeattr:sw1') is False), 'Failed to del sw1 attrib'
 
 def test_get_node(nib):
     # setup
@@ -413,7 +412,7 @@ def test_add_del_edges(nib):
     # assert that the count for set 'edges' is 2.
     assert (nib.r.scard('edges') == 2), 'Failed to add nodes'
     # assert basic edge add
-    assert (nib.r.sismember('edges', 'edge:sw1:sw2') is False), \
+    assert (nib.r.sismember('edges', 'sw1:sw2') is True), \
         'Failed to add edge sw1:sw2'
     # assert that device attributes set for sw2->sw4
     assert (nib.r.hget('edgeattr:sw2:sw4', 'outport') ==
