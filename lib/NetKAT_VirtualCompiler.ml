@@ -28,12 +28,6 @@ type extendedPort =
   | RealPort of portId
   | Loop of portId (* when looping, remember last port! *)
 
-(* marks for graph traversal *)
-type mark =
-  | Seen
-  | Ok
-  | NotOk
-
 let equal = (=)
 let hash = Hashtbl.hash
 
@@ -170,6 +164,18 @@ module G_prod = struct
   let add_edge' v1 v2 g = add_edge g v1 v2
 end
 
+(* marks for graph traversal *)
+type mark =
+  | NotOk
+  | UncommittedOk of G_prod.V.t list
+  | Ok
+
+let join_marks m1 m2 =
+  match m1, m2 with
+  | NotOk, _ | _, NotOk -> NotOk
+  | UncommittedOk vs1, UncommittedOk vs2 -> UncommittedOk (vs1@vs2)
+  | m, Ok | Ok, m -> m
+
 let parse_vrel (vrel : pred) =
   let rec parse_physical pred alist =
     match pred with
@@ -268,7 +274,6 @@ begin
 
 end
 
-
 let generate_fabrics vrel v_topo v_ing v_eg p_topo p_ing p_eg  =
 begin
   let vgraph = G_virt.make_graph v_ing v_eg v_topo in
@@ -283,9 +288,6 @@ begin
     Printf.printf "|E(prod_graph)|: %i\n" (G_prod.nb_edges prod_graph);
   end in
 
-  let mark_tbl = Tbl.create () in
-  let dist_tbl = Tbl.create () in
-
   let module WEIGHT = struct
     type label = unit
     type t = int
@@ -299,22 +301,47 @@ begin
 
   let module Dijkstra = Graph.Path.Dijkstra(G_phys)(WEIGHT) in
 
-  let rec visit prod_vertex =
-    match Tbl.find mark_tbl prod_vertex with
-    | Some mark -> mark (* already visited *)
+  let mark_tbl : (G_prod.V.t, mark) Tbl.t = Tbl.create () in
+  let dist_tbl : (G_phys.V.t * G_phys.V.t, G_phys.E.t list * int) Tbl.t = Tbl.create () in
+
+  let rec visit ?(root=true) v =
+    match Tbl.find mark_tbl v with
+    | Some m -> m (* already committed mark *)
     | None ->
-      let () = Tbl.replace mark_tbl ~key:prod_vertex ~data:Seen in
+      (* SJS: UncommitedOK [] == Seen *)
+      let seen = UncommittedOk [] in
+      let () = Tbl.replace mark_tbl ~key:v ~data:seen in
       (* SJS: We can order sucs, for example by distance, to obtain a greedy algorithm *)
-      let sucs = G_prod.succ prod_graph prod_vertex in
-      let check = begin
-        match prod_vertex with
-        | ConsistentOut _ | ConsistentIn _ -> List.for_all
-        | InconsistentIn _ | InconsistentOut _ -> List.exists
-      end in
-      (* SJS: ensure that this algorithm is actually correct; both Seen and Ok are accepted *)
-      let mark = if check (fun v -> visit v <> NotOk) sucs then Ok else NotOk in
-      Tbl.replace mark_tbl ~key:prod_vertex ~data:mark;
-      mark
+      let sucs = G_prod.succ prod_graph v in
+      (* The consistent player, i.e. the programmer, requires ALL sucessor vertices to be Ok.
+         Intuitively, this means no matter how the programmer introduces inconsistency,
+         the fabric will always be able to restore consitency . *)
+      let consistent_player m v =
+        match m with
+        | NotOk -> NotOk
+        | _ -> join_marks (visit v ~root:false) m
+      in
+      (* The inconsistent player, i.e. the fabric, requires AT LEAST ONE sucessor vertex to be Ok.
+         Intuitively, this means that the fabric has at least one way to restore consistency *)
+      let inconsistent_player m v =
+        match m with
+        | NotOk -> visit v ~root:false
+        | _ -> m
+      in
+      let (player, s) =
+        match v with
+        | ConsistentOut _ | ConsistentIn _ -> (consistent_player, Ok)
+        | InconsistentIn _ | InconsistentOut _ -> (inconsistent_player, NotOk)
+      in
+      match List.fold_left player s sucs with
+      | (UncommittedOk vs) ->
+        if root
+          then begin
+            List.iter (fun v -> Tbl.replace mark_tbl ~key:v ~data:Ok) (v::vs);
+            Ok
+          end
+          else UncommittedOk (v::vs)
+      | m -> Tbl.replace mark_tbl ~key:v ~data:m; m
   in
 
   let rec get_winning_graph' src winning_g =
