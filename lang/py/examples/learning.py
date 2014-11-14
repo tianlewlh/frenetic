@@ -5,9 +5,6 @@ from netkat.syntax import *
 
 """Ethernet Learning switch"""
 
-def state():
-    pass
-
 table = {}
 topo = {}
 
@@ -56,22 +53,23 @@ def policy():
 
 class LearningApp(webkat.App):
     def switch_up(self,switch_id):
+        print "SWITCH_UP"
         topo[switch_id] = []
         table[switch_id] = {}
-        webkat.update(policy())
+        self.update(policy())
     def switch_down(self,switch_id):
         del topo[switch_id]
         del table[switch_id]
-        webkat.update(policy())
+        self.update(policy())
     def port_up(self,switch_id, port_id):
         topo[switch_id].append(port_id)
-        webkat.update(policy())
+        self.update(policy())
     def port_down(self,switch_id, port_id):
         topo[switch_id].remove(port_id)
-        webkat.update(policy())
+        self.update(policy())
     def packet_in(self,switch_id, port_id, packet):
         learn(switch_id,packet,port_id)
-        webkat.update(policy())
+        self.update(policy())
 
 if __name__ == '__main__':
     LearningApp().start()
