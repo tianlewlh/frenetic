@@ -305,15 +305,59 @@ end
    composition of sequential compositions. *)
 module Action = struct
 
-  module Seq = Map.Make(struct
-    type t = Field.t with sexp
-    let compare = Field.compare
-  end)
+  module Mod = Map.Make(Field)
+  module Seq = struct
+    type t
+      = Mod of Value.t Mod.t
+      | Dup of Value.t Mod.t
+      with sexp
 
-  module Par = Set.Make(struct
-    type t = Value.t Seq.t with sexp
-    let compare = Seq.compare_direct Value.compare
-  end)
+    let empty = Mod Mod.empty
+    let dup   = Dup Mod.empty
+
+    let mod_merge a b =
+      (* Favor modifications to the right *)
+      Mod.merge a b ~f:(fun ~key m ->
+        match m with | `Both(_, v) | `Left v | `Right v -> Some(v))
+
+    let as_mod = function
+      | Mod a -> a
+      | Dup a -> a
+
+    let lift f = function
+      | Mod a -> Mod (f a)
+      | Dup a -> Dup (f a)
+
+    let to_mod = function
+      | Mod a -> a
+      | Dup _ -> raise Non_local
+
+    let find t = Mod.find (as_mod t)
+    let iter t = Mod.iter (as_mod t)
+    let remove t v = lift (fun t -> Mod.remove t v) t
+    let to_alist t = Mod.to_alist (as_mod t)
+
+    let length = function
+      | Mod a -> Mod.length a
+      | Dup a -> 1 + (Mod.length a)
+
+    let singleton k v = Mod (Mod.singleton k v)
+
+    let merge a b =
+      match a, b with
+      | Mod a, Mod b -> Mod (mod_merge a b)
+      | Mod a, Dup b -> Dup (mod_merge a b)
+      | _    ,     _ -> raise Non_local
+
+    let compare a b =
+      match a, b with
+      | Mod a, Mod b -> Value.compare a b
+      | Dup a, Dup b -> Value.compare a b
+      | Mod _, Dup _ -> -1
+      | Dup _, Mod _ ->  1
+
+  end
+  module Par = Set.Make(Seq)
 
   type t = Par.t with sexp
 
@@ -336,12 +380,7 @@ module Action = struct
     else if Par.equal b one then a      (* p; 1 == p *)
     else
       Par.fold a ~init:zero ~f:(fun acc seq1 ->
-        let r = Par.map b ~f:(fun seq2 ->
-          (* Favor modifications to the right *)
-          Seq.merge seq1 seq2 ~f:(fun ~key m ->
-            match m with | `Both(_, v) | `Left v | `Right v -> Some(v)))
-        in
-        Par.union acc r)
+        Par.union acc (Par.map b ~f:(Seq.merge seq1)))
 
   let negate t : t =
     (* This implements negation for the [zero] and [one] actions. Any
@@ -377,7 +416,8 @@ module Action = struct
         | Some (Query _) -> assert false
         | Some mask      -> raise (FieldValue_mismatch(Location, mask))
       in
-      Seq.fold (Seq.remove seq Location) ~init ~f:(fun ~key ~data acc ->
+      let m = Seq.to_mod seq in
+      Mod.fold (Mod.remove m Location) ~init ~f:(fun ~key ~data acc ->
         match key, data with
         | Switch  , Const switch -> raise Non_local
         | Switch  , _ -> raise (FieldValue_mismatch(Switch, data))
@@ -409,7 +449,7 @@ module Action = struct
   let to_policy t =
     let open NetKAT_Types in
     Par.fold t ~init:drop ~f:(fun acc seq ->
-      let seq' = Seq.fold seq ~init:id ~f:(fun ~key ~data acc ->
+      let seq' = Mod.fold (Seq.to_mod seq) ~init:id ~f:(fun ~key ~data acc ->
         let hv = match Pattern.to_hv (key, data) with
           | IP4Src(nwAddr, 32l) -> IP4Src(nwAddr, 32l)
           | IP4Dst(nwAddr, 32l) -> IP4Dst(nwAddr, 32l)
