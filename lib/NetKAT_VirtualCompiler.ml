@@ -309,16 +309,19 @@ let prune_product_graph g =
    selection at each step, yielding a fabric valid for ingress ing. *)
 let fabric_graph_of_pruned g ing cost =
   let rec select v g' =
+    if G_prod.mem_vertex g' v then g' else
     let g' = G_prod.add_vertex g' v in
     match G_prod.V.label v with
     | ConsistentIn _ | ConsistentOut _ ->
-       G_prod.fold_succ select g v g'
+       G_prod.fold_succ (select' v) g v g'
     | InconsistentIn _ | InconsistentOut _ ->
        let sucs = G_prod.succ g v in
        begin match minimize sucs (fun v' -> cost v v') with
          | None -> assert false
-         | Some (selection, _) -> select selection g'
+         | Some (selection, _) -> (select' v) selection g'
        end
+  and select' v v' g' =
+    G_prod.add_edge (select v' g') v v'
   in
   List.fold_right select ing G_prod.empty
 
@@ -429,6 +432,10 @@ let generate_fabrics vrel v_topo v_ing v_eg p_topo p_ing p_eg  =
     Printf.printf "|E(pgraph)|: %i\n" (G_phys.nb_edges pgraph);
     Printf.printf "|V(prod_graph)|: %i\n" (G_prod.nb_vertex prod_graph);
     Printf.printf "|E(prod_graph)|: %i\n" (G_prod.nb_edges prod_graph);
+    Printf.printf "|V(pruned_graph)|: %i\n" (G_prod.nb_vertex pruned_graph);
+    Printf.printf "|E(pruned_graph)|: %i\n" (G_prod.nb_edges pruned_graph);
+    Printf.printf "|V(fabric_graph)|: %i\n" (G_prod.nb_vertex fabric_graph);
+    Printf.printf "|E(fabric_graph)|: %i\n" (G_prod.nb_edges fabric_graph);
     fabric
   end
 
