@@ -409,7 +409,7 @@ let generate_fabrics vrel v_topo v_ing v_eg p_topo p_ing p_eg  =
   end in
 
   let vgraph = G.Virt.make v_ing v_eg v_topo in
-  let pgraph = G.Phys.make p_ing p_eg p_topo in
+  let pgraph = G.Phys.make_with_loops p_ing p_eg p_topo in
   let prod_ing, prod_graph = make_product_graph vgraph pgraph v_ing vrel in
 
   let module Dijkstra = Graph.Path.Dijkstra(G.Phys)(WEIGHT) in
