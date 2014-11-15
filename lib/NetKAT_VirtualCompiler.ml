@@ -31,35 +31,50 @@ type ('a, 'b) node_type =
   | InPort of 'a * 'b
   | OutPort of 'a * 'b
 
-(* port wrapper *)
+(* extend ports with self-loops *)
 type extendedPort =
   | RealPort of portId
   | Loop of portId (* when looping, remember last port! *)
 
-let equal = (=)
-let hash = Hashtbl.hash
-
 (* virtual vertex *)
-module V_virt = struct
-  type t = (vswitchId, vportId) node_type (* vv *)
+module VV = struct
+  type t = (vswitchId, vportId) node_type
   let compare = compare
-  let equal = equal
-  let hash  = hash
+  let equal = (=)
+  let hash  = Hashtbl.hash
 end
 
 (* physical vertex *)
-module V_phys = struct
-  type t = (switchId, extendedPort) node_type (* pv *)
+module PV = struct
+  type t = (switchId, extendedPort) node_type
   let compare = compare
-  let equal = equal
-  let hash = hash
+  let equal = (=)
+  let hash = Hashtbl.hash
 end
 
-module MakeGraph (Params : sig
+(* product vertex *)
+type product = (VV.t * PV.t)
+type product_vertex =
+  | ConsistentIn of product
+  | InconsistentOut of product
+  | ConsistentOut of product
+  | InconsistentIn of product
+module V = struct
+  type t = product_vertex (* v *)
+  let compare = compare
+  let equal = (=)
+  let hash = Hashtbl.hash
+end
+
+
+
+(* Module to build graphs from a topologies (physical or virtual) *)
+module GraphBuilder (Params : sig
   type switch
   type port
   val locs_from_pred : pred -> (switch * port) list
   val links_from_topo : policy -> (switch * port * switch * port) list
+  val mk_loop : port -> port
 end) (Vlabel : Graph.Sig.COMPARABLE with type t = (Params.switch, Params.port) node_type) = struct
   include Params
   module G = Graph.Persistent.Digraph.Concrete(Vlabel)
@@ -75,42 +90,67 @@ end) (Vlabel : Graph.Sig.COMPARABLE with type t = (Params.switch, Params.port) n
       |> add_vertex' out_pt
 
   let add_link (sw1, pt1, sw2, pt2) g =
-      g |> add_loc (sw1, pt1)
-        |> add_loc (sw2, pt2)
-        |> add_edge' (G.V.create (OutPort (sw1, pt1))) (G.V.create (InPort (sw2, pt2)))
+    g |> add_loc (sw1, pt1)
+      |> add_loc (sw2, pt2)
+      |> add_edge' (G.V.create (OutPort (sw1, pt1))) (G.V.create (InPort (sw2, pt2)))
 
-  let make_graph (ingress : pred) (egress : pred) (topo : policy) =
-    let connect_switch_ports' v1 v2 g =
-      match V.label v1, V.label v2 with
-      | InPort (sw, _), OutPort (sw', _) when sw=sw' -> add_edge' v1 v2 g
-      | _ -> g in
-    let connect_switch_ports g =
-      fold_vertex (fun v1 g' -> fold_vertex (fun v2 g' -> connect_switch_ports' v1 v2 g') g g') g g
-    in
+  let connect_switch_ports' v1 v2 g =
+    match V.label v1, V.label v2 with
+    | InPort (sw, _), OutPort (sw', _) when sw=sw' -> add_edge' v1 v2 g
+    | _ -> g
+
+  let connect_switch_ports g =
+    fold_vertex (fun v1 g' -> fold_vertex (fun v2 g' -> connect_switch_ports' v1 v2 g') g g') g g
+
+  let add_loop' sw loop g =
+    let inLoop = G.V.create (InPort (sw, loop)) in
+    let outLoop = G.V.create (OutPort (sw, loop)) in
+    let g = g |> add_vertex' inLoop
+              |> add_vertex' outLoop
+              |> add_edge' inLoop outLoop
+              |> add_edge' outLoop inLoop in
+    (inLoop, outLoop, g)
+
+  let add_loop v g =
+    match V.label v with
+    | InPort (sw, pt) ->
+       let _, outLoop, g = add_loop' sw (mk_loop pt) g in
+       add_edge' v outLoop g
+    | _ -> g
+
+  let make (ingress : pred) (egress : pred) (topo : policy) =
     G.empty |> List.fold_right add_link (links_from_topo topo)
             |> List.fold_right add_loc (locs_from_pred ingress)
             |> List.fold_right add_loc (locs_from_pred egress)
             |> connect_switch_ports
+
+  let make_with_loops (ingress : pred) (egress : pred) (topo : policy) =
+    let g = make ingress egress topo in
+    fold_vertex add_loop g g
 end
 
-module G_virt = MakeGraph (struct
-  type switch = vswitchId
-  type port = vportId
-  let rec locs_from_pred pred =
-    match pred with
-    | And (Test (VSwitch vsw), Test (VPort vpt)) -> [(vsw, vpt)]
-    | Or (p1, p2) -> locs_from_pred p1 @ locs_from_pred p2
-    | _ -> failwith "Virtual Compiler: not a valid virtual ingress/egress predicate"
-  let rec links_from_topo vtopo =
-    match vtopo with
-    | VLink (vsw1,vpt1,vsw2,vpt2) -> [(vsw1,vpt1,vsw2,vpt2)]
-    | Union (t1, t2) -> links_from_topo t1 @ links_from_topo t2
-    | _ -> failwith "Virtual Compiler: not a valid virtual topology"
-end) (V_virt)
 
-(* SJS: super ugly! do this better *)
-module G_phys = struct
-  include MakeGraph (struct
+
+(* Module holding the three types of graphs we need: virtual, phyiscal, product*)
+module G = struct
+
+  module Virt = GraphBuilder (struct
+    type switch = vswitchId
+    type port = vportId
+    let rec locs_from_pred pred =
+      match pred with
+      | And (Test (VSwitch vsw), Test (VPort vpt)) -> [(vsw, vpt)]
+      | Or (p1, p2) -> locs_from_pred p1 @ locs_from_pred p2
+      | _ -> failwith "Virtual Compiler: not a valid virtual ingress/egress predicate"
+    let rec links_from_topo vtopo =
+      match vtopo with
+      | VLink (vsw1,vpt1,vsw2,vpt2) -> [(vsw1,vpt1,vsw2,vpt2)]
+      | Union (t1, t2) -> links_from_topo t1 @ links_from_topo t2
+      | _ -> failwith "Virtual Compiler: not a valid virtual topology"
+    let mk_loop _ = assert false
+  end) (VV)
+
+  module Phys = GraphBuilder (struct
     type switch = switchId
     type port = extendedPort
     let rec locs_from_pred pred =
@@ -125,59 +165,30 @@ module G_phys = struct
       | Link (sw1,pt1,sw2,pt2) -> [(sw1, RealPort pt1, sw2, RealPort pt2)]
       | Union (t1, t2) -> links_from_topo t1 @ links_from_topo t2
       | _ -> failwith "Virtual Compiler: not a valid physical topology"
-  end) (V_phys)
 
-  let make_graph (ingress : pred) (egress : pred) (topo : policy) =
-    let g = make_graph ingress egress topo in
+    let mk_loop extp =
+      match extp with
+      | RealPort pt -> Loop pt
+      | Loop _ -> assert false
+  end) (PV)
 
-    let add_loop sw pt g =
-      let inLoop = G.V.create (InPort (sw, Loop pt)) in
-      let outLoop = G.V.create (OutPort (sw, Loop pt)) in
-      let g = g |> add_vertex' inLoop
-                |> add_vertex' outLoop
-                |> add_edge' inLoop outLoop
-                |> add_edge' outLoop inLoop in
-      (inLoop, outLoop, g)
-    in
+  module Prod = struct
+    include Graph.Persistent.Digraph.Concrete(V)
+    let add_vertex' v g = add_vertex g v
+    let add_edge' v1 v2 g = add_edge g v1 v2
+  end
 
-    let install_loop v g =
-      match V.label v with
-      | InPort (sw, RealPort pt) ->
-         let _, outLoop, g = add_loop sw pt g in
-         add_edge' v outLoop g
-      | _ -> g
-    in
-    fold_vertex install_loop g g
+  (* aux *)
+  let unwrap_v v =
+    match Prod.V.label v with
+    | ConsistentIn (vv, pv) | InconsistentIn (vv, pv)
+    | ConsistentOut (vv, pv) | InconsistentOut (vv, pv) -> (vv, pv)
+  let vv_of_v v = fst (unwrap_v v)
+  let pv_of_v v = snd (unwrap_v v)
+
 end
 
-(* product vertex *)
-type product = (G_virt.V.t * G_phys.V.t)
-type product_vertex =
-  | ConsistentIn of product
-  | InconsistentOut of product
-  | ConsistentOut of product
-  | InconsistentIn of product
 
-module V_prod = struct
-  type t = product_vertex (* v *)
-  let compare = compare
-  let equal = equal
-  let hash = hash
-end
-
-module G_prod = struct
-  include Graph.Persistent.Digraph.Concrete(V_prod)
-  let add_vertex' v g = add_vertex g v
-  let add_edge' v1 v2 g = add_edge g v1 v2
-end
-
-let unwrap_v v =
-  match G_prod.V.label v with
-  | ConsistentIn (vv, pv) | InconsistentIn (vv, pv)
-  | ConsistentOut (vv, pv) | InconsistentOut (vv, pv) -> (vv, pv)
-
-let vv_of_v v = fst (unwrap_v v)
-let pv_of_v v = snd (unwrap_v v)
 
 let parse_vrel (vrel : pred) =
   let rec parse_physical pred alist =
@@ -199,7 +210,9 @@ let parse_vrel (vrel : pred) =
   | `Ok map -> map
   | `Duplicate_key (_, _) -> failwith "Virtual Compiler: virtual relation contains duplicate key"
 
-let make_product_graph (vgraph : G_virt.t) (pgraph : G_phys.t) (ving : pred) (vrel : pred) =
+
+
+let make_product_graph (vgraph : G.Virt.t) (pgraph : G.Phys.t) (ving : pred) (vrel : pred) =
 begin
 
   let vrel_tbl = parse_vrel vrel in
@@ -207,53 +220,53 @@ begin
   let vrel (vsw, vpt) = Tbl.find vrel_tbl (vsw, vpt) |> Core.Std.Option.value ~default:[] in
 
   let vrel' vv =
-    match G_virt.V.label vv with
+    match G.Virt.V.label vv with
     | InPort (vsw, vpt) ->
-       vrel (vsw, vpt) |> List.map (fun (sw, pt) -> G_phys.V.create (InPort (sw, pt)))
+       vrel (vsw, vpt) |> List.map (fun (sw, pt) -> G.Phys.V.create (InPort (sw, pt)))
     | OutPort (vsw, vpt) ->
-       vrel (vsw, vpt) |> List.map (fun (sw, pt) -> G_phys.V.create (OutPort (sw, pt)))
+       vrel (vsw, vpt) |> List.map (fun (sw, pt) -> G.Phys.V.create (OutPort (sw, pt)))
   in
 
   let pgraph_closure =
-    let module Op = Graph.Oper.P(G_phys) in
+    let module Op = Graph.Oper.P(G.Phys) in
     Op.transitive_closure ~reflexive:false pgraph
   in
 
   let virt_ing =
-    List.map (fun (vsw, vpt) -> InPort (vsw, vpt) |> G_virt.V.create) (G_virt.locs_from_pred ving)
+    List.map (fun (vsw, vpt) -> InPort (vsw, vpt) |> G.Virt.V.create) (G.Virt.locs_from_pred ving)
   in
 
   let prod_ing =
     List.map (fun vv -> product [vv] (vrel' vv)) virt_ing
     |> List.flatten
-    |> List.map (fun (vv, pv) -> G_prod.V.create (ConsistentIn (vv, pv)))
+    |> List.map (fun (vv, pv) -> G.Prod.V.create (ConsistentIn (vv, pv)))
   in
 
   let step v =
-    begin match G_prod.V.label v with
+    begin match G.Prod.V.label v with
     | ConsistentIn (vv, pv)  ->
-       let virtual_sucs = G_virt.succ vgraph vv in
-       List.map (fun vv -> InconsistentOut (vv, pv) |> G_prod.V.create) virtual_sucs
+       let virtual_sucs = G.Virt.succ vgraph vv in
+       List.map (fun vv -> InconsistentOut (vv, pv) |> G.Prod.V.create) virtual_sucs
     | InconsistentOut (vv, pv) ->
        let physical_sucs =
          match vrel' vv with
          (* SJS: This is a hack. We interpret [] as true, although to be consistent we would have
                  to interpret it as false *)
-         | [] -> G_phys.succ pgraph_closure pv
-         | logical_sucs -> inters logical_sucs (G_phys.succ pgraph_closure pv) in
-       List.map (fun psuc -> ConsistentOut (vv, psuc) |> G_prod.V.create) physical_sucs
+         | [] -> G.Phys.succ pgraph_closure pv
+         | logical_sucs -> inters logical_sucs (G.Phys.succ pgraph_closure pv) in
+       List.map (fun psuc -> ConsistentOut (vv, psuc) |> G.Prod.V.create) physical_sucs
     | ConsistentOut (vv, pv) ->
        (* SJS: check that if there are no successors, we have reached the egress *)
-       let virtual_sucs = G_virt.succ vgraph vv in
-       List.map (fun vsuc -> InconsistentIn (vsuc, pv) |> G_prod.V.create) virtual_sucs
+       let virtual_sucs = G.Virt.succ vgraph vv in
+       List.map (fun vsuc -> InconsistentIn (vsuc, pv) |> G.Prod.V.create) virtual_sucs
     | InconsistentIn (vv, pv) ->
        let physical_sucs =
          match vrel' vv with
          (* SJS: This is a hack. We interpret [] as true, although to be consistent we would have
                  to interpret it as false *)
-         | [] -> G_phys.succ pgraph_closure pv
-         | logical_sucs -> inters logical_sucs (G_phys.succ pgraph_closure pv) in
-       List.map (fun pv -> ConsistentIn (vv, pv) |> G_prod.V.create) physical_sucs
+         | [] -> G.Phys.succ pgraph_closure pv
+         | logical_sucs -> inters logical_sucs (G.Phys.succ pgraph_closure pv) in
+       List.map (fun pv -> ConsistentIn (vv, pv) |> G.Prod.V.create) physical_sucs
     end
   in
 
@@ -261,19 +274,19 @@ begin
     begin match work_list with
     | [] ->
        (* add edges after all vertices are inserted *)
-       List.fold_left (fun g (v1, v2) -> G_prod.add_edge g v1 v2) g edges
+       List.fold_left (fun g (v1, v2) -> G.Prod.add_edge g v1 v2) g edges
     | v::vs ->
-       if G_prod.mem_vertex g v then
+       if G.Prod.mem_vertex g v then
          make vs edges g
        else
-         let g' = G_prod.add_vertex g v in
+         let g' = G.Prod.add_vertex g v in
          let sucs = step v in
          let edges' = List.fold_left (fun edges suc -> (v, suc)::edges) edges sucs in
          make (sucs@work_list) edges' g'
     end
   in
 
-  (prod_ing, make prod_ing [] (G_prod.empty))
+  (prod_ing, make prod_ing [] (G.Prod.empty))
 
 end
 
@@ -285,21 +298,21 @@ let prune_product_graph g =
   (* an inconsistent location in the product graph is "fatal" if restoring consistency is
    impossible; here we exlude nodes that are fatal "by transitivity" *)
   let is_fatal v g =
-    match G_prod.V.label v with
-    | InconsistentIn _ | InconsistentOut _ -> G_prod.out_degree g v = 0
+    match G.Prod.V.label v with
+    | InconsistentIn _ | InconsistentOut _ -> G.Prod.out_degree g v = 0
     | _ -> false
   in
   (* erases fatal node and all its predecessors that are fatal by transitivity *)
   let rec erase_fatal v g =
-    match G_prod.V.label v with
+    match G.Prod.V.label v with
     | InconsistentIn _ | InconsistentOut _ ->
-       let g' = G_prod.remove_vertex g v in
-       G_prod.fold_pred erase_fatal g v g'
+       let g' = G.Prod.remove_vertex g v in
+       G.Prod.fold_pred erase_fatal g v g'
     | ConsistentOut _ | ConsistentIn _ ->
-       let g' = G_prod.remove_vertex g v in
-       G_prod.fold_pred (fun v g -> if is_fatal v g then erase_fatal v g else g) g v g'
+       let g' = G.Prod.remove_vertex g v in
+       G.Prod.fold_pred (fun v g -> if is_fatal v g then erase_fatal v g else g) g v g'
   in
-  G_prod.fold_vertex (fun v g -> if is_fatal v g then erase_fatal v g else g) g g
+  G.Prod.fold_vertex (fun v g -> if is_fatal v g then erase_fatal v g else g) g g
 
 
 (* The pruned graph may leave the fabric with several options to restore consistency; to arrive at
@@ -309,33 +322,33 @@ let prune_product_graph g =
    selection at each step, yielding a fabric valid for ingress ing. *)
 let fabric_graph_of_pruned g ing cost =
   let rec select v g' =
-    if G_prod.mem_vertex g' v then g' else
-    let g' = G_prod.add_vertex g' v in
-    match G_prod.V.label v with
+    if G.Prod.mem_vertex g' v then g' else
+    let g' = G.Prod.add_vertex g' v in
+    match G.Prod.V.label v with
     | ConsistentIn _ | ConsistentOut _ ->
-       G_prod.fold_succ (select' v) g v g'
+       G.Prod.fold_succ (select' v) g v g'
     | InconsistentIn _ | InconsistentOut _ ->
-       let sucs = G_prod.succ g v in
+       let sucs = G.Prod.succ g v in
        begin match minimize sucs (fun v' -> cost v v') with
          | None -> assert false
          | Some (selection, _) -> (select' v) selection g'
        end
   and select' v v' g' =
-    G_prod.add_edge (select v' g') v v'
+    G.Prod.add_edge (select v' g') v v'
   in
-  List.fold_right select ing G_prod.empty
+  List.fold_right select ing G.Prod.empty
 
 let match_vloc' vv =
-  match G_virt.V.label vv with
+  match G.Virt.V.label vv with
   | InPort (vsw, vpt) | OutPort (vsw, vpt) -> match_vloc (vsw, vpt)
 
 let match_ploc' pv =
-  match G_phys.V.label pv with
+  match G.Phys.V.label pv with
   | InPort (sw, RealPort pt) | OutPort (sw, RealPort pt)
   | InPort (sw, Loop pt) | OutPort (sw, Loop pt) -> match_ploc (sw, pt)
 
 let set_vloc' vv =
-  match G_virt.V.label vv with
+  match G.Virt.V.label vv with
   | InPort (vsw, vpt) | OutPort (vsw, vpt) -> set_vloc (vsw, vpt)
 
 let rec policy_of_path path =
@@ -355,7 +368,7 @@ let rec policy_of_path path =
   | _ -> failwith "Virtual Compiler: bug in implementation"
 
 let fabric_atom_of_prod_edge path_oracle v1 v2 =
-  match G_prod.V.label v1, G_prod.V.label v2 with
+  match G.Prod.V.label v1, G.Prod.V.label v2 with
   | (InconsistentOut (vv, pv1) as l), ConsistentOut (vv', pv2)
   | (InconsistentIn (vv, pv1) as l), ConsistentIn (vv', pv2) ->
      assert (vv = vv');
@@ -370,16 +383,16 @@ let fabric_atom_of_prod_edge path_oracle v1 v2 =
   | _ -> failwith "Virtual Compiler: invalid prduct graph"
 
 let map_edges f g =
-  G_prod.fold_vertex (fun v1 l -> G_prod.fold_succ (fun v2 l -> f v1 v2 :: l) g v1 l) g []
+  G.Prod.fold_vertex (fun v1 l -> G.Prod.fold_succ (fun v2 l -> f v1 v2 :: l) g v1 l) g []
 
 let fabric_of_fabric_graph g ing path_oracle =
-  if List.for_all (fun v -> G_prod.mem_vertex g v) ing then
+  if List.for_all (fun v -> G.Prod.mem_vertex g v) ing then
     let f v1 v2 ((fout, fin) as fs) =
       match fabric_atom_of_prod_edge path_oracle v1 v2 with
       | `None -> fs
       | `Out f -> (f::fout, fin)
       | `In f -> (fout, f::fin) in
-    G_prod.fold_edges f g ([], [])
+    G.Prod.fold_edges f g ([], [])
   else
     failwith "global compiler: specification allows for no valid fabric"
 
@@ -395,14 +408,14 @@ let generate_fabrics vrel v_topo v_ing v_eg p_topo p_ing p_eg  =
     let zero = 0
   end in
 
-  let vgraph = G_virt.make_graph v_ing v_eg v_topo in
-  let pgraph = G_phys.make_graph p_ing p_eg p_topo in
+  let vgraph = G.Virt.make v_ing v_eg v_topo in
+  let pgraph = G.Phys.make p_ing p_eg p_topo in
   let prod_ing, prod_graph = make_product_graph vgraph pgraph v_ing vrel in
 
-  let module Dijkstra = Graph.Path.Dijkstra(G_phys)(WEIGHT) in
+  let module Dijkstra = Graph.Path.Dijkstra(G.Phys)(WEIGHT) in
   let dist_tbl = Tbl.create () in
 
-  let unwrap_e e = (G_phys.V.label (G_phys.E.src e), G_phys.V.label (G_phys.E.dst e)) in
+  let unwrap_e e = (G.Phys.V.label (G.Phys.E.src e), G.Phys.V.label (G.Phys.E.dst e)) in
   let unwrap_path path = List.map unwrap_e path in
 
   let get_path_and_distance pv1 pv2 =
@@ -420,22 +433,22 @@ let generate_fabrics vrel v_topo v_ing v_eg p_topo p_ing p_eg  =
   in
 
   let path_oracle pv1 pv2 = fst (get_path_and_distance pv1 pv2) in
-  let cost v1 v2 = snd (get_path_and_distance (pv_of_v v1) (pv_of_v v2)) in
+  let cost v1 v2 = snd (get_path_and_distance (G.pv_of_v v1) (G.pv_of_v v2)) in
 
   let pruned_graph = prune_product_graph prod_graph in
   let fabric_graph = fabric_graph_of_pruned pruned_graph prod_ing cost in
   let fabric = fabric_of_fabric_graph fabric_graph prod_ing path_oracle in
   begin
-    Printf.printf "|V(vgraph)|: %i\n" (G_virt.nb_vertex vgraph);
-    Printf.printf "|E(vgraph)|: %i\n" (G_virt.nb_edges vgraph);
-    Printf.printf "|V(pgraph)|: %i\n" (G_phys.nb_vertex pgraph);
-    Printf.printf "|E(pgraph)|: %i\n" (G_phys.nb_edges pgraph);
-    Printf.printf "|V(prod_graph)|: %i\n" (G_prod.nb_vertex prod_graph);
-    Printf.printf "|E(prod_graph)|: %i\n" (G_prod.nb_edges prod_graph);
-    Printf.printf "|V(pruned_graph)|: %i\n" (G_prod.nb_vertex pruned_graph);
-    Printf.printf "|E(pruned_graph)|: %i\n" (G_prod.nb_edges pruned_graph);
-    Printf.printf "|V(fabric_graph)|: %i\n" (G_prod.nb_vertex fabric_graph);
-    Printf.printf "|E(fabric_graph)|: %i\n" (G_prod.nb_edges fabric_graph);
+    Printf.printf "|V(vgraph)|: %i\n" (G.Virt.nb_vertex vgraph);
+    Printf.printf "|E(vgraph)|: %i\n" (G.Virt.nb_edges vgraph);
+    Printf.printf "|V(pgraph)|: %i\n" (G.Phys.nb_vertex pgraph);
+    Printf.printf "|E(pgraph)|: %i\n" (G.Phys.nb_edges pgraph);
+    Printf.printf "|V(prod_graph)|: %i\n" (G.Prod.nb_vertex prod_graph);
+    Printf.printf "|E(prod_graph)|: %i\n" (G.Prod.nb_edges prod_graph);
+    Printf.printf "|V(pruned_graph)|: %i\n" (G.Prod.nb_vertex pruned_graph);
+    Printf.printf "|E(pruned_graph)|: %i\n" (G.Prod.nb_edges pruned_graph);
+    Printf.printf "|V(fabric_graph)|: %i\n" (G.Prod.nb_vertex fabric_graph);
+    Printf.printf "|E(fabric_graph)|: %i\n" (G.Prod.nb_edges fabric_graph);
     fabric
   end
 
