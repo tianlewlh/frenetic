@@ -6,7 +6,7 @@ import networkx as nx
 from networkx.readwrite import json_graph
 from ryu.ofproto.ether import ETH_TYPE_ARP
 import redisnibjson # schema represented as JSON
-# import redisnib # schema represented with redis hashes/sets
+#import redisnib # schema represented with redis hashes/sets
 
 """Topology Discovery"""
 
@@ -55,11 +55,16 @@ def policy():
 ##
 def probe():
     print '=== PROBE ==='
+    print nib.nodes()
     for node in nib.nodes():
+        print "for    node ",node
         if(nib.node(str(node),'device') == 'switch'):
-	    for port in nib.node_ports(node):
+            print "This node's ports are: ", nib.node_ports(str(node))
+            #ports are no longer being associated
+            for port in nib.node_ports(node):
                 # (nb): NOTE: Force node,port into dst,src fields of Ethernet packet. Temporary only!
-		dp = ethernet.ethernet(dst=int(node),src=int(port),ethertype=0x3366)
+		print "Sending out from ",node," ",port
+                dp = ethernet.ethernet(dst=int(node),src=int(port),ethertype=0x3366)
                 p = packet.Packet()
                 p.add_protocol(dp)
                 p.serialize()
@@ -69,24 +74,24 @@ def probe():
 
 class TopologyDiscovery(webkat.App):
     def switch_up(self,switch_id):
-	if(nib.node(str(switch_id)) is not None):
+	if(nib.node(switch_id) is not None):
             pass
         else:
+            print "Adding switch ", switch_id
             nib.add_node(str(switch_id),device='switch')
-	    #nib.node[switch_id]['ports'] = set()
-	    #nib.node(switch_id,'ports') = set()
 	webkat.update(policy())
     def switch_down(self,switch_id):
-	nib.remove_node(str(switch_id))
+	nib.remove_node(switch_id)
 	webkat.update(policy())
     def port_up(self,switch_id,port_id):
 	#nib.node(switch_id,'ports').add(port_id)
-	nib.add_port(switch_id,port_id)
+	nib.add_port(str(switch_id),port_id)
 	webkat.update(policy())
     def port_down(self,switch_id,port_id):
 	#nib.node(str(switch_id),'ports').remove(str(port_id))
-	nib.del_port(switch_id,port_id)
-	webkat.update(policy())
+        print "Adding port ", port_id, " to switch ", switch_id
+	nib.add_port(str(switch_id),port_id)
+        webkat.update(policy()) #TODO: No longer needed?
     def packet_in(self,switch_id,port_id,packet):
 	p = get_ethernet(packet)
 	if p.ethertype == ETH_TYPE_ARP:
@@ -101,7 +106,6 @@ class TopologyDiscovery(webkat.App):
    	   nib.add_edge(str(src_sw),str(switch_id),outport=src_port,inport=port_id)
 	   nib.add_edge(str(switch_id),str(src_sw),outport=port_id,inport=src_port)	
 	pass
-
 	# print "NIB: %s" % json_graph.node_link_data(nib)
 	webkat.update(policy())
 
