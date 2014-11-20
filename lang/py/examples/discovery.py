@@ -5,7 +5,8 @@ from netkat.syntax import *
 import networkx as nx
 from networkx.readwrite import json_graph
 from ryu.ofproto.ether import ETH_TYPE_ARP
-import redisnib
+import redisnibjson # schema represented as JSON
+# import redisnib # schema represented with redis hashes/sets
 
 """Topology Discovery"""
 
@@ -25,7 +26,8 @@ PROBE_INTERVAL = 5
 # (nb): Arbitrarily assigned ethtype to (switch) discovery packets
 ETH_TYPE_DISCOVERY_PACKET = 0x3366
 
-nib = redisnib.RedisNib()
+nib = redisnibjson.RedisNib()  # using json for now
+#nib = redisnib.RedisNib()
 
 ##
 # Helper functions
@@ -55,7 +57,7 @@ def probe():
     print '=== PROBE ==='
     for node in nib.nodes():
         if(nib.node(str(node),'device') == 'switch'):
-	    for port in nib.node_ports(str(node)):
+	    for port in nib.node_ports(node):
                 # (nb): NOTE: Force node,port into dst,src fields of Ethernet packet. Temporary only!
 		dp = ethernet.ethernet(dst=int(node),src=int(port),ethertype=0x3366)
                 p = packet.Packet()
@@ -79,25 +81,25 @@ class TopologyDiscovery(webkat.App):
 	webkat.update(policy())
     def port_up(self,switch_id,port_id):
 	#nib.node(switch_id,'ports').add(port_id)
-	nib.add_port(str(switch_id),str(port_id))
+	nib.add_port(switch_id,port_id)
 	webkat.update(policy())
     def port_down(self,switch_id,port_id):
 	#nib.node(str(switch_id),'ports').remove(str(port_id))
-	nib.del_port(str(switch_id),str(port_id))
+	nib.del_port(switch_id,port_id)
 	webkat.update(policy())
     def packet_in(self,switch_id,port_id,packet):
 	p = get_ethernet(packet)
 	if p.ethertype == ETH_TYPE_ARP:
            host_id = "h%s" % (str(switch_id) + "-" + str(port_id))
 	   nib.add_node(str(host_id),device='host')
-	   nib.add_edge(str(switch_id),str(host_id),outport=str(port_id),inport=str(0))
-	   nib.add_edge(str(host_id),str(switch_id),outport=str(0),inport=str(port_id))
+	   nib.add_edge(str(switch_id),str(host_id),outport=port_id,inport=0)
+	   nib.add_edge(str(host_id),str(switch_id),outport=0,inport=port_id)
         elif p.ethertype == ETH_TYPE_DISCOVERY_PACKET:
 	   # (nb): Remove ryu.packet's MAC string format
 	   src_sw = int((p.dst).replace(':',''),16)
    	   src_port = int((p.src).replace(':',''),16)
-   	   nib.add_edge(str(src_sw),str(switch_id),outport=str(src_port),inport=str(port_id))
-	   nib.add_edge(str(switch_id),str(src_sw),outport=str(port_id),inport=str(src_port))	
+   	   nib.add_edge(str(src_sw),str(switch_id),outport=src_port,inport=port_id)
+	   nib.add_edge(str(switch_id),str(src_sw),outport=port_id,inport=src_port)	
 	pass
 
 	# print "NIB: %s" % json_graph.node_link_data(nib)
