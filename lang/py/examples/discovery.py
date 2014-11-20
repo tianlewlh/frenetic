@@ -56,7 +56,7 @@ def policy():
 def probe():
     print '=== PROBE ==='
     for node in nib.nodes():
-        if(nib.node(str(node),'device') == 'switch'):
+        if(nib.node(node,'device') == 'switch'):
             #ports are no longer being associated
             for port in nib.node_ports(node):
                 # (nb): NOTE: Force node,port into dst,src fields of Ethernet packet. Temporary only!
@@ -73,30 +73,31 @@ class TopologyDiscovery(webkat.App):
 	if(nib.node(switch_id) is not None):
             pass
         else:
-            nib.add_node(str(switch_id),device='switch')
+            nib.add_node(switch_id,device='switch')
 	webkat.update(policy())
     def switch_down(self,switch_id):
-	nib.remove_node(str(switch_id))
+	nib.remove_node(switch_id)
 	webkat.update(policy())
-    def port_up(self,switch_id,port_id)
-	nib.add_port(str(switch_id),port_id)
+    def port_up(self,switch_id,port_id):
+	nib.add_port(switch_id,port_id)
 	webkat.update(policy())
     def port_down(self,switch_id,port_id):
-	nib.add_port(str(switch_id),port_id)
-        webkat.update(policy()) #TODO: No longer needed?
+	nib.add_port(switch_id,port_id)
+        webkat.update(policy())
     def packet_in(self,switch_id,port_id,packet):
 	p = get_ethernet(packet)
-	if p.ethertype == ETH_TYPE_ARP:
-           host_id = "h%s" % (str(switch_id) + "-" + str(port_id))
-	   nib.add_node(str(host_id),device='host')
-	   nib.add_edge(str(switch_id),str(host_id),outport=port_id,inport=0)
-	   nib.add_edge(str(host_id),str(switch_id),outport=0,inport=port_id)
+        if p.ethertype == ETH_TYPE_ARP: 
+           # Override Ryu default with '-' to avoid conflict with edge ':' format 
+           host_id = (p.src).replace(':','-')
+           nib.add_node(host_id,device='host')
+	   nib.add_edge(switch_id,host_id,outport=port_id,inport=0)
+	   nib.add_edge(host_id,switch_id,outport=0,inport=port_id)
         elif p.ethertype == ETH_TYPE_DISCOVERY_PACKET:
 	   # (nb): Remove ryu.packet's MAC string format
 	   src_sw = int((p.dst).replace(':',''),16)
    	   src_port = int((p.src).replace(':',''),16)
-   	   nib.add_edge(str(src_sw),str(switch_id),outport=src_port,inport=port_id)
-	   nib.add_edge(str(switch_id),str(src_sw),outport=port_id,inport=src_port)	
+   	   nib.add_edge(src_sw,switch_id,outport=src_port,inport=port_id)
+	   nib.add_edge(switch_id,src_sw,outport=port_id,inport=src_port)	
 	pass
 	# print "NIB: %s" % json_graph.node_link_data(nib)
 	webkat.update(policy())

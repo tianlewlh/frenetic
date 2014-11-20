@@ -139,6 +139,10 @@ class RedisNib:
         >>> nib.add_node('sw2')
 
         """
+        
+        # Must cast to string here (allows simpler application logic)
+        n = str(n)
+
         # If attributes, store them in JSON with key ('nodeattr:'+n)
         if attr:
             # From digraph.py
@@ -169,6 +173,9 @@ class RedisNib:
           'nodeports:'+n for each node
 
         """
+        
+        n = str(n)
+        
         # First make sure the node exists
         s = self.exists('nodes', n)
         if s is True:
@@ -224,6 +231,9 @@ class RedisNib:
              (Used to test if exists.)
              (TODO is there something better to return for the last case?)
         """
+    
+        n = str(n)
+
         # First make sure the node exists
         s = self.exists('nodes', n)
         if s is False:
@@ -248,6 +258,9 @@ class RedisNib:
            A node in the graph
         >>> nib.remove_node(sw)
         """
+        
+        n = str(n)
+        
         # Remove node n.  TODO (ks): do we need to report if not found?
         self.del_from_arr('nodes', n)
         # Remove node attributes, if they exist
@@ -293,6 +306,9 @@ class RedisNib:
         >>> nib.add_edge('sw2','sw4',outport=8675,inport=80)
 
         """
+
+        u = str(u)
+        v = str(v)
 
         # If attributes, store them in a JSON object with key ('edgeattr:'+n)
         if attr:
@@ -360,27 +376,25 @@ class RedisNib:
         # We must convert a set of concat'ed strings back in to tuples
         l = self.get_arr('edges')
         edgelist = []
-        patterns = ['(\\d+)(:)(\\d+)',          #sw-sw
-                    '(\\d+)(:)(h\\d+-\\d+)',    #sw-h
-                    '(h\\d+-\\d+)(:)(\\d+)',    #h-sw
-                    '(\\w+)(:)(\\w+)']          #anystr-anystr (non-mn names)
 
-        def extract_from_re(estr):
-            for p in patterns:
-                if re.match(p,estr) is not None:
-                    edge_re = re.compile(p)
-                    edge = edge_re.search(estr)
-                    assert edge.group(2) == ':'
-                    return (edge.group(1),edge.group(3))
-            # Did not successfully match a pattern
-            print "ERROR: Could not parse edges with expected pattern"
-            return None
+        host_str = re.compile("[0-9a-f]{2}([-])[0-9a-f]{2}(\\1[0-9a-f]{2}){4}$") 
+        sw_str = re.compile("(\\d+)")                
 
-        for estr in l: # l = ['2:4', ....
-            edge = extract_from_re(estr)
-            assert edge is not None
-            edgelist.append((edge[0], edge[1]))
+        def valid_edge(in_n,out_n):
+            # True iff in_n and out_n are either host_str or sw_str
+            # Allows for h-h, sw-sw, sw-h, h-sw
+            # Requires .lower() for MAC addr
+            if (re.match(host_str,in_n.lower()) or re.match(sw_str,in_n)) and (re.match(host_str,out_n.lower()) or re.match(sw_str,out_n)):
+                return True
+            else:
+                return False
 
+        for estr in l:
+            edge = estr.split(":")
+            in_node = edge[0]
+            out_node = edge[1]
+            assert valid_edge(in_node,out_node) == True
+            edgelist.append((in_node,out_node))
 
         return edgelist
 
