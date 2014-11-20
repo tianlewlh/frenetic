@@ -55,15 +55,11 @@ def policy():
 ##
 def probe():
     print '=== PROBE ==='
-    print nib.nodes()
     for node in nib.nodes():
-        print "for    node ",node
         if(nib.node(str(node),'device') == 'switch'):
-            print "This node's ports are: ", nib.node_ports(str(node))
             #ports are no longer being associated
             for port in nib.node_ports(node):
                 # (nb): NOTE: Force node,port into dst,src fields of Ethernet packet. Temporary only!
-		print "Sending out from ",node," ",port
                 dp = ethernet.ethernet(dst=int(node),src=int(port),ethertype=0x3366)
                 p = packet.Packet()
                 p.add_protocol(dp)
@@ -77,19 +73,15 @@ class TopologyDiscovery(webkat.App):
 	if(nib.node(switch_id) is not None):
             pass
         else:
-            print "Adding switch ", switch_id
             nib.add_node(str(switch_id),device='switch')
 	webkat.update(policy())
     def switch_down(self,switch_id):
-	nib.remove_node(switch_id)
+	nib.remove_node(str(switch_id))
 	webkat.update(policy())
-    def port_up(self,switch_id,port_id):
-	#nib.node(switch_id,'ports').add(port_id)
+    def port_up(self,switch_id,port_id)
 	nib.add_port(str(switch_id),port_id)
 	webkat.update(policy())
     def port_down(self,switch_id,port_id):
-	#nib.node(str(switch_id),'ports').remove(str(port_id))
-        print "Adding port ", port_id, " to switch ", switch_id
 	nib.add_port(str(switch_id),port_id)
         webkat.update(policy()) #TODO: No longer needed?
     def packet_in(self,switch_id,port_id,packet):
