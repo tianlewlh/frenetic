@@ -29,6 +29,8 @@ depopts: [
   & "packet"    {>= "0.2.1"}
   & "topology"  {>= "0.1.0"}
   & "cohttp"
+  & "yojson"
+  & "base64"
   )
   "quickcheck"
 ]
