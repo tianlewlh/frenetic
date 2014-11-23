@@ -87,15 +87,13 @@ class TopologyDiscovery(webkat.App):
     def packet_in(self,switch_id,port_id,packet):
 	p = get_ethernet(packet)
         if p.ethertype == ETH_TYPE_ARP: 
-           # Override Ryu default with '-' to avoid conflict with edge ':' format 
-           host_id = (p.src).replace(':','-')
+           host_id = p.src
            nib.add_node(host_id,device='host')
 	   nib.add_edge(switch_id,host_id,outport=port_id,inport=0)
 	   nib.add_edge(host_id,switch_id,outport=0,inport=port_id)
         elif p.ethertype == ETH_TYPE_DISCOVERY_PACKET:
-	   # (nb): Remove ryu.packet's MAC string format
-	   src_sw = int((p.dst).replace(':',''),16)
-   	   src_port = int((p.src).replace(':',''),16)
+	   src_sw = p.dst
+   	   src_port = p.src
    	   nib.add_edge(src_sw,switch_id,outport=src_port,inport=port_id)
 	   nib.add_edge(switch_id,src_sw,outport=port_id,inport=src_port)	
 	pass

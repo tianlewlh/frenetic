@@ -30,7 +30,7 @@ Key Name         | JSON Object or Array
                  | - For discovery.py, these attributes are defined as:
                  |   nodeattr: {"switch": "device"}
 -----------------|-------------------------------------------------------------
-"edgeattr:(u:v)" | JSON object of variable edge attributes for directed edge
+"edgeattr:(u@v)" | JSON object of variable edge attributes for directed edge
                  | from node "u" to node "v".  (one key per edge)
                  | - For discovery.py, these attributes are defined as:
                  |      edgeattr: { "inport": 80, "outport": 8675}
@@ -320,9 +320,9 @@ class RedisNib:
             except: # TODO (ks): how to handle errors?
                 print 'The attr_dict argument must be a dictionary.'
             # Store the attributes in addition to storing the node
-            self.r.set('edgeattr:' + u + ':' + v, json.dumps(attr_dict))
+            self.r.set('edgeattr:' + u + '@' + v, json.dumps(attr_dict))
         # Add u->v to the set of edges.
-        self.append_to_arr('edges', u + ':' + v)
+        self.append_to_arr('edges', u + '@' + v)
 
         # "The nodes u and v will be automatically added if they are
         # not already in the graph." (from digraph.py, we can change)
@@ -354,7 +354,7 @@ class RedisNib:
              (TODO is there something better to return for the last case?)
         """
         # First make sure the edge exists
-        edgename = u + ':' + v
+        edgename = u + '@' + v
         if self.exists('edges', edgename) is False:
             return None
         else:
@@ -377,23 +377,15 @@ class RedisNib:
         l = self.get_arr('edges')
         edgelist = []
 
-        host_str = re.compile("[0-9a-f]{2}([-])[0-9a-f]{2}(\\1[0-9a-f]{2}){4}$") 
-        sw_str = re.compile("(\\d+)")                
-
-        def valid_edge(in_n,out_n):
-            # True iff in_n and out_n are either host_str or sw_str
-            # Allows for h-h, sw-sw, sw-h, h-sw
-            # Requires .lower() for MAC addr
-            if (re.match(host_str,in_n.lower()) or re.match(sw_str,in_n)) and (re.match(host_str,out_n.lower()) or re.match(sw_str,out_n)):
-                return True
-            else:
-                return False
-
+        # Currently not making any assumptions about node names, other than 
+        #   they don't contain the character '@'
         for estr in l:
-            edge = estr.split(":")
-            in_node = edge[0]
-            out_node = edge[1]
-            assert valid_edge(in_node,out_node) == True
+            print estr
+            edge = estr.split("@")
+            print edge
+            assert (len(edge) == 2)
+            in_node = str(edge[0])
+            out_node = str(edge[1])
             edgelist.append((in_node,out_node))
 
         return edgelist
@@ -401,9 +393,9 @@ class RedisNib:
     def remove_edge(self, u, v):
         """Remove the edge between nodes u and v."""
         # TODO (ks): do we need to report if not found?
-        self.del_from_arr('edges', u + ':' + v)
+        self.del_from_arr('edges', u + '@' + v)
         # Remove node attributes, if they exist
-        self.r.delete('edgeattr:' + u + ':' + v)
+        self.r.delete('edgeattr:' + u + '@' + v)
 
     # TODO (ks): Implement this stuff (and others...?):
     # More attribute related things
@@ -512,33 +504,33 @@ def test_add_del_edges(nib):
     assert (len(vals) == 4), 'Failed to add edges'
 
     # assert basic edge add
-    assert (nib.exists('edges', 'sw1:sw2') is True), \
-        'Failed to add edge sw1:sw2'
+    assert (nib.exists('edges', 'sw1@sw2') is True), \
+        'Failed to add edge sw1@sw2'
     # assert that device attributes set for sw2->sw4
-    attr_dict_str = nib.r.get('edgeattr:sw2:sw4')
-    assert (attr_dict_str is not None), 'Couldn\'t find edge attrib sw2:sw4'
+    attr_dict_str = nib.r.get('edgeattr:sw2@sw4')
+    assert (attr_dict_str is not None), 'Couldn\'t find edge attrib sw2@sw4'
     assert (json.JSONDecoder().decode(attr_dict_str).get('outport') == \
         8675), 'Failed to set edge attrib'
 
     # Test that there are no dangling edges after a node is removed
-    assert(nib.exists('edges', 'sw1:sw5') is True), \
-        'Failed to add edge 1:5 for node sw5'
-    assert(nib.exists('edges', 'sw1:sw5') is True), \
-        'Failed to add edge 5:2 for node sw5'
+    assert(nib.exists('edges', 'sw1@sw5') is True), \
+        'Failed to add edge 1@5 for node sw5'
+    assert(nib.exists('edges', 'sw1@sw5') is True), \
+        'Failed to add edge 5@2 for node sw5'
     nib.remove_node('sw5')
-    assert(nib.exists('edges', 'sw1:sw5') is False), \
-        'Failed to delete edge 1:5 for deleted node sw5'
-    assert(nib.exists('edges', 'sw1:sw5') is False), \
-        'Failed to delete edge 5:2 for deleted node sw5'
+    assert(nib.exists('edges', 'sw1@sw5') is False), \
+        'Failed to delete edge 1@5 for deleted node sw5'
+    assert(nib.exists('edges', 'sw1@sw5') is False), \
+        'Failed to delete edge 5@2 for deleted node sw5'
 
     # Test remove edge:
     nib.remove_edge('sw1', 'sw2')
-    # Test that sw1:sw3 was removed from 'edges' array
-    assert (nib.exists('nodes', 'sw1:sw2') is False), \
-        'Failed to delete sw1:sw2'
+    # Test that sw1@sw3 was removed from 'edges' array
+    assert (nib.exists('nodes', 'sw1@sw2') is False), \
+        'Failed to delete sw1@sw2'
     nib.remove_edge('sw2', 'sw4')
-    # Test that key 'edgeattr:sw2:sw4' was removed from redis
-    assert (nib.r.exists('edgeattr:sw2:sw4') is False), \
+    # Test that key 'edgeattr:sw2@sw4' was removed from redis
+    assert (nib.r.exists('edgeattr:sw2@sw4') is False), \
         'Failed to del sw2 attrib'
 
 def test_get_edges(nib):
