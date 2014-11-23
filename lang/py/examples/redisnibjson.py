@@ -78,7 +78,7 @@ class RedisNib:
             arr.append(value)
             self.r.set(key, json.dumps(arr))
         else:
-            vals = json.JSONDecoder().decode(value_str)
+            vals = json.loads(value_str)
             # Append value to json array
             if value not in vals:
                 try:
@@ -91,7 +91,7 @@ class RedisNib:
         """ Check to see if 'value' exists in the array belonging to 'key' """
         value_str = self.r.get(key)
         if value_str is not None:
-            vals = json.JSONDecoder().decode(value_str)
+            vals = json.loads(value_str)
             # Check for value from json array
             if value in vals:
                 return True
@@ -101,7 +101,7 @@ class RedisNib:
         """ For 'key', return the corresponding array as a list"""
         value_str = self.r.get(key)
         if value_str is not None:
-            return json.JSONDecoder().decode(value_str)
+            return json.loads(value_str)
         else:
             return []
 
@@ -111,7 +111,7 @@ class RedisNib:
         """
         value_str = self.r.get(key)
         if value_str is not None:
-            vals = json.JSONDecoder().decode(value_str)
+            vals = json.loads(value_str)
             # Delete value from json array
             if value in vals:
                 try:
@@ -205,7 +205,7 @@ class RedisNib:
         if nodeports_str is None:
             return set([])
         else:
-            return set(json.JSONDecoder().decode(nodeports_str))
+            return set(json.loads(nodeports_str))
 
     def node(self, n, attr_lookup=None):
         """
@@ -243,7 +243,7 @@ class RedisNib:
                 # The node exists. Now lookup the requested attributes
                 attr_dict_str = self.r.get('nodeattr:'+n)
                 if attr_dict_str is not None:
-                    return (json.JSONDecoder().decode(attr_dict_str).
+                    return (json.loads(attr_dict_str).
                        get(attr_lookup))
                 else:
                     return None
@@ -362,7 +362,7 @@ class RedisNib:
                 # The edge exists. Now lookup the requested attributes
                 attr_dict_str = self.r.get('edgeattr:'+edgename)
                 if attr_dict_str is not None:
-                    return (json.JSONDecoder().decode(attr_dict_str).
+                    return (json.loads(attr_dict_str).
                         get(attr_lookup))
                 else:
                     return None
@@ -411,12 +411,12 @@ def test_add_del_node(nib):
     # Test add:
     # assert that the count for set 'nodes' is 2.
     node_arr_str = nib.r.get('nodes')
-    vals = json.JSONDecoder().decode(node_arr_str)
+    vals = json.loads(node_arr_str)
     assert (len(vals) == 2), 'Failed to add nodes'
     # assert that device attributes set for sw1
     attr_dict_str = nib.r.get('nodeattr:sw1')
     assert (attr_dict_str is not None), 'Couldn\'t find node sw1'
-    assert (json.JSONDecoder().decode(attr_dict_str).get('device') == \
+    assert (json.loads(attr_dict_str).get('device') == \
         'switch'), 'Failed to set node attrib'
 
     # Test remove:
@@ -454,7 +454,7 @@ def test_ports(nib):
 
     # test add_port to a legit node
     nib.add_port('sw1', 80)
-    portlist = json.JSONDecoder().decode(nib.r.get('nodeports:sw1'))
+    portlist = json.loads(nib.r.get('nodeports:sw1'))
     assert (len(portlist) is 1), 'Found wrong number of ports'
     assert ((80 in portlist) is True), 'Failed to add port 80'
 
@@ -470,13 +470,13 @@ def test_ports(nib):
     # test deleting a port
     nib.del_port('sw1', 80)
     assert (nib.exists('sw1', 80) is False), 'Failed to delete port 80'
-    portlist = json.JSONDecoder().decode(nib.r.get('nodeports:sw1'))
+    portlist = json.loads(nib.r.get('nodeports:sw1'))
     assert ((80 in portlist) is False), \
        'Failed to delete port 80 from set sw1'
 
     # test that deleting a node deletes its ports
     nib.add_port('sw1', 443)
-    portlist = json.JSONDecoder().decode(nib.r.get('nodeports:sw1'))
+    portlist = json.loads(nib.r.get('nodeports:sw1'))
     assert (len(portlist) is 1), 'Found wrong number of ports'
     assert ((443 in portlist) is True), 'Failed to add port 80'
     nib.remove_node('sw1')
@@ -498,7 +498,7 @@ def test_add_del_edges(nib):
     # Test add edge:
     # assert that the count for set 'edges' is 4.
     edges_arr_str = nib.r.get('edges')
-    vals = json.JSONDecoder().decode(edges_arr_str)
+    vals = json.loads(edges_arr_str)
     assert (len(vals) == 4), 'Failed to add edges'
 
     # assert basic edge add
@@ -507,7 +507,7 @@ def test_add_del_edges(nib):
     # assert that device attributes set for sw2->sw4
     attr_dict_str = nib.r.get('edgeattr:sw2@sw4')
     assert (attr_dict_str is not None), 'Couldn\'t find edge attrib sw2@sw4'
-    assert (json.JSONDecoder().decode(attr_dict_str).get('outport') == \
+    assert (json.loads(attr_dict_str).get('outport') == \
         8675), 'Failed to set edge attrib'
 
     # Test that there are no dangling edges after a node is removed
@@ -556,17 +556,17 @@ def test_json_helper_functions(nib):
     nib.r.flushall() # wipe previous
 
     nib.append_to_arr('testkey', 8080)
-    l = json.JSONDecoder().decode(nib.r.get('testkey'))
+    l = json.loads(nib.r.get('testkey'))
     assert (len(l) is 1), 'Did not find the right number of appended elements'
     assert ((8080 in l) is True), 'Did not find the right port in appended elm'
     assert (nib.exists('testkey', 8080) is True), 'Exists should have been True'
 
     nib.append_to_arr('testkey', 8080)
-    l = json.JSONDecoder().decode(nib.r.get('testkey'))
+    l = json.loads(nib.r.get('testkey'))
     assert (len(l) is 1), 'Appended duplicate element'
 
     nib.append_to_arr('testkey', 80)
-    l = json.JSONDecoder().decode(nib.r.get('testkey'))
+    l = json.loads(nib.r.get('testkey'))
     assert (len(l) is 2), 'Did not append as expected'
 
     full_list = nib.get_arr('testkey')
