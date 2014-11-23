@@ -380,9 +380,7 @@ class RedisNib:
         # Currently not making any assumptions about node names, other than 
         #   they don't contain the character '@'
         for estr in l:
-            print estr
             edge = estr.split("@")
-            print edge
             assert (len(edge) == 2)
             in_node = str(edge[0])
             out_node = str(edge[1])
