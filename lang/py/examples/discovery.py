@@ -1,5 +1,5 @@
 import base64
-from ryu.lib.packet import packet,ethernet,arp
+from ryu.lib.packet import packet_base,packet,ethernet,arp
 from netkat import webkat
 from netkat.syntax import *
 import networkx as nx
@@ -7,6 +7,11 @@ from networkx.readwrite import json_graph
 from ryu.ofproto.ether import ETH_TYPE_ARP
 import redisnibjson # schema represented as JSON
 #import redisnib # schema represented with redis hashes/sets
+
+import struct
+from ryu.ofproto import ether
+from ryu.lib import addrconv
+
 
 """Topology Discovery"""
 
@@ -57,7 +62,6 @@ def probe():
     print '=== PROBE ==='
     for node in nib.nodes():
         if(nib.node(node,'device') == 'switch'):
-            #ports are no longer being associated
             for port in nib.node_ports(node):
                 # (nb): NOTE: Force node,port into dst,src fields of Ethernet packet. Temporary only!
                 dp = ethernet.ethernet(dst=int(node),src=int(port),ethertype=0x3366)
@@ -65,6 +69,7 @@ def probe():
                 p.add_protocol(dp)
                 p.serialize()
                 webkat.pkt_out(int(node),int(port),p.data)
+    
     print nib.edges() #(data=True)
     return
 
@@ -92,8 +97,9 @@ class TopologyDiscovery(webkat.App):
 	   nib.add_edge(switch_id,host_id,outport=port_id,inport=0)
 	   nib.add_edge(host_id,switch_id,outport=0,inport=port_id)
         elif p.ethertype == ETH_TYPE_DISCOVERY_PACKET:
-	   src_sw = p.dst
-   	   src_port = p.src
+	    # (nb): Remove ryu.packet's MAC string format
+           src_sw = int((p.dst).replace(':',''),16)
+   	   src_port = int((p.src).replace(':',''),16)
    	   nib.add_edge(src_sw,switch_id,outport=src_port,inport=port_id)
 	   nib.add_edge(switch_id,src_sw,outport=port_id,inport=src_port)	
 	pass
