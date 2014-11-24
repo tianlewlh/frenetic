@@ -1,0 +1,6 @@
+INIT ['edgeattr', 'reverseid']: {edge = rediskey.split("@")  
+in_node = str(edge[0]).replace("edgeattr:", "")
+out_node = str(edge[1])  
+$out = out_node + '@' + in_node}
+
+INIT ['nodeattr', 'active']: {$out = True}
