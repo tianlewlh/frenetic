@@ -61,7 +61,7 @@ def main():
 
         edges = []
 
-        for e in r.get('edges'):
+        for e in nib.edges():
             nodes = e.split("@")
             edges.append(nodes[0],nodes[1],r.get('edgeattr:%s' % e))
 

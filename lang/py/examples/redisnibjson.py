@@ -273,9 +273,14 @@ class RedisNib:
             if((e[0] == n) or (e[1] == n)): 
                 self.remove_edge(e[0], e[1])
 
+    # http://stackoverflow.com/questions/21283042/keep-empty-data-keys-in-redis
     def nodes(self):
         """ Return a list of all the nodes. """
-        return self.get_arr('nodes')
+        n = self.get_arr('nodes')
+        if n is not None:
+           return n
+        else:
+           return []
 
     def add_edge(self, u, v, attr_dict=None, **attr):
         """Add an edge between u and v.
@@ -375,6 +380,8 @@ class RedisNib:
 
         # We must convert a set of concat'ed strings back in to tuples
         l = self.get_arr('edges')
+        if l is None:
+            return []
         edgelist = []
 
         # Currently not making any assumptions about node names, other than 
@@ -405,6 +412,7 @@ class RedisNib:
 def test_add_del_node(nib):
     # setup
     nib.r.flushall() # wipe previous
+    assert(nib.nodes() == [])
     nib.add_node('sw1',device='switch')
     nib.add_node('sw2')
 
@@ -486,6 +494,7 @@ def test_ports(nib):
 def test_add_del_edges(nib):
     # setup
     nib.r.flushall() # wipe previous
+    assert(nib.edges() == [])
     nib.add_edge('sw1','sw2')
     nib.add_edge('sw2','sw4',outport=8675,inport=80)
     nib.add_edge('sw1','sw5')
@@ -581,7 +590,6 @@ def test_json_helper_functions(nib):
     nib.del_from_arr('testkey', 8080)
     l = nib.get_arr('testkey')
     assert (len(l) is 0), 'Did not delete as expected, should be empty'
-
 
 def main():
     nib = RedisNib()
