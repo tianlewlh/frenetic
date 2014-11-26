@@ -25,7 +25,7 @@ Library netkat
     core,
     fieldslib,
     fieldslib.syntax,
-    ocamlgraph,
+    ocamlgraph (> 1.8.5),
     openflow,
     sexplib,
     sexplib.syntax,

@@ -407,23 +407,28 @@ let fabric_of_fabric_graph g ing path_oracle =
     failwith "global compiler: specification allows for no valid fabric"
 
 let generate_fabrics vrel v_topo v_ing v_eg p_topo p_ing p_eg  =
-  let module WEIGHT = struct
-    type label = unit
-    type t = int
-    (* SJS: ideally, we should give loops weight 0, but this requires adding appropriate labels
-       to the edges *)
-    let weight _ = 1
-    let compare = compare
-    let add x y = x + y
-    let zero = 0
-  end in
-
   let vgraph = G.Virt.make v_ing v_eg v_topo in
   let pgraph = G.Phys.make ~with_loops:true p_ing p_eg p_topo in
   let prod_ing, prod_graph = make_product_graph vgraph pgraph v_ing vrel in
 
   let unwrap_e e = (G.Phys.V.label (G.Phys.E.src e), G.Phys.V.label (G.Phys.E.dst e)) in
   let unwrap_path path = List.map unwrap_e path in
+
+  let module WEIGHT = struct
+    type edge = G.Phys.E.t
+    type t = int
+    (* SJS: ideally, we should give loops weight 0, but this requires adding appropriate labels
+       to the edges *)
+    let weight e =
+      match unwrap_e e with
+      | InPort _, OutPort _ -> 0
+      | OutPort (_, Loop _), _ -> 0
+      | OutPort _, InPort _ -> 1
+      | _, _ -> assert false
+    let compare = compare
+    let add x y = x + y
+    let zero = 0
+  end in
 
   let module Dijkstra = Graph.Path.Dijkstra(G.Phys)(WEIGHT) in
   let dist_tbl = Tbl.create () in
