@@ -1,10 +1,10 @@
-open Sexplib.Conv
-
 (** NetKAT Syntax *)
+open Sexplib.Conv
 open Core.Std
 
-(** {2 Basics} *)
 open Packet
+
+(** {2 Basics} *)
 
 type switchId = SDN_Types.switchId with sexp
 type portId = SDN_Types.portId with sexp
@@ -54,17 +54,9 @@ type policy =
   | Star of policy
   | Link of switchId * portId * switchId * portId
   | VLink of vswitchId * vportId * vswitchId * vportId
-  with sexp
 
-let id = Filter True
-let drop = Filter False
-
-(** {2 Packets}
-
-  If we only defined the semantics and were not building a system, a
-  packet would only be a record of headers. However, the runtime needs to
-  apply [eval] to packets contained in [PACKET_IN] mesages. For the runtime,
-  packets also carry a payload that is unmodified by [eval]. *)
+val id : policy
+val drop : policy
 
 (** {3 Applications} *)
 

@@ -1,17 +1,27 @@
 module Run = struct
   open Core.Std
   open Async.Std
-  let main update learn policy_queue_size filename =
+
+  let main update learn no_discovery no_host policy_queue_size filename =
     let main () =
+      let open Async_NetKAT in
       let static = match filename with
-      | None   -> Async_NetKAT.create_from_string "filter *"
-      | Some f -> Async_NetKAT.create_from_file f
+      | None   -> Policy.create_from_string "filter true"
+      | Some f -> Policy.create_from_file f
       in
+      let host      = not (no_host) in
+      let discovery = not (no_discovery) in
       let app = if learn
-        then Async_NetKAT.seq static (Learning.create ())
+        then seq static (Learning.create ())
         else static
       in
-      Async_NetKAT_Controller.start ~update ?policy_queue_size app () in
+      let open Async_NetKAT_Controller in
+      start ~update ?policy_queue_size app ()
+      >>= (fun t ->
+        begin if host then enable_host_discovery t else return () end >>= fun () ->
+        begin if discovery then enable_discovery t else return () end)
+      >>> fun () -> ()
+    in
     never_returns (Scheduler.go_main ~max_num_open_file_descrs:4096 ~main ())
 end
 
@@ -21,26 +31,27 @@ module Global = struct
     let () = Format.pp_set_margin fmt 120 in
     let ingress =
       Core.Std.In_channel.with_file ingress_file ~f:(fun chan ->
-        NetKAT_Parser.predicate NetKAT_Lexer.token (Lexing.from_channel chan)) in
+        NetKAT_Parser.pred_program NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let egress =
       Core.Std.In_channel.with_file egress_file ~f:(fun chan ->
-        NetKAT_Parser.predicate NetKAT_Lexer.token (Lexing.from_channel chan)) in
+        NetKAT_Parser.pred_program NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let global_pol =
       Core.Std.In_channel.with_file policy_file ~f:(fun chan ->
         NetKAT_Parser.program NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let local_pol = NetKAT_GlobalCompiler.compile ingress egress global_pol in
+    let switches =
+      NetKAT_Misc.switches_of_policy (Optimize.mk_seq (NetKAT_Types.Filter ingress) global_pol) in
     let tables =
       List.map
-        (fun sw -> NetKAT_LocalCompiler.compile sw local_pol
-                   |> NetKAT_LocalCompiler.to_table
+        (fun sw -> NetKAT_LocalCompiler.compile local_pol
+                   |> NetKAT_LocalCompiler.to_table sw
                    |> (fun t -> (sw, t)))
-        (NetKAT_Misc.switches_of_policy global_pol) in
+        switches in
     let print_table (sw, t) =
       Format.fprintf fmt "[global] Flowtable for Switch %Ld:@\n@[%a@]@\n@\n"
         sw
         SDN_Types.format_flowTable t in
     Format.fprintf fmt "@\n";
-    Format.fprintf fmt "[global] Parsed: @[%s@] @[%s@] @[%s@] @\n@\n" ingress_file egress_file policy_file;
     Format.fprintf fmt "[global] Ingress:@\n@[%a@]@\n@\n" NetKAT_Pretty.format_pred ingress;
     Format.fprintf fmt "[global] Egress:@\n@[%a@]@\n@\n" NetKAT_Pretty.format_pred egress;
     Format.fprintf fmt "[global] Input Policy:@\n@[%a@]@\n@\n" NetKAT_Pretty.format_policy global_pol;
@@ -59,7 +70,7 @@ module Virtual = struct
         NetKAT_Parser.program NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let vrel =
       Core.Std.In_channel.with_file vrel_file ~f:(fun chan ->
-        NetKAT_Parser.predicate NetKAT_Lexer.token (Lexing.from_channel chan)) in
+        NetKAT_Parser.pred_program NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let vtopo =
       Core.Std.In_channel.with_file vtopo_file ~f:(fun chan ->
         NetKAT_Parser.program NetKAT_Lexer.token (Lexing.from_channel chan)) in
@@ -68,27 +79,27 @@ module Virtual = struct
         NetKAT_Parser.program NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let ving =
       Core.Std.In_channel.with_file ving_file ~f:(fun chan ->
-        NetKAT_Parser.predicate NetKAT_Lexer.token (Lexing.from_channel chan)) in
+        NetKAT_Parser.pred_program NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let veg =
       Core.Std.In_channel.with_file veg_file ~f:(fun chan ->
-        NetKAT_Parser.predicate NetKAT_Lexer.token (Lexing.from_channel chan)) in
+        NetKAT_Parser.pred_program NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let ptopo =
       Core.Std.In_channel.with_file ptopo_file ~f:(fun chan ->
         NetKAT_Parser.program NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let ping =
       Core.Std.In_channel.with_file ping_file ~f:(fun chan ->
-        NetKAT_Parser.predicate NetKAT_Lexer.token (Lexing.from_channel chan)) in
+        NetKAT_Parser.pred_program NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let peg =
       Core.Std.In_channel.with_file peg_file ~f:(fun chan ->
-        NetKAT_Parser.predicate NetKAT_Lexer.token (Lexing.from_channel chan)) in
+        NetKAT_Parser.pred_program NetKAT_Lexer.token (Lexing.from_channel chan)) in
     let global_physical_pol =
       NetKAT_VirtualCompiler.compile vpolicy vrel vtopo ving_pol ving veg ptopo ping peg in
     let local_physical_pol =
       NetKAT_GlobalCompiler.compile ping peg global_physical_pol in
     let tables =
       List.map
-        (fun sw -> NetKAT_LocalCompiler.compile sw local_physical_pol
-                   |> NetKAT_LocalCompiler.to_table
+        (fun sw -> NetKAT_LocalCompiler.compile local_physical_pol
+                   |> NetKAT_LocalCompiler.to_table sw
                    |> (fun t -> (sw, t)))
         (NetKAT_Misc.switches_of_policy global_physical_pol) in
     let print_table (sw, t) =
@@ -126,15 +137,23 @@ module Dump = struct
 
   module Local = struct
 
-    let with_compile (sw : SDN_Types.switchId) (p : NetKAT_Types.policy) =
+    let with_compile p =
       let open NetKAT_LocalCompiler in
-      let _ =
-        Format.printf "@[Compiling switch %Ld [size=%d]...@]%!"
-          sw (NetKAT_Semantics.size p) in
-      let c_time, i = profile (fun () -> compile sw p) in
-      let t_time, t = profile (fun () -> to_table i) in
-      let _ = Format.printf "@[Done [ctime=%fs ttime=%fs tsize=%d]@\n@]%!"
-        c_time t_time (List.length t) in
+      let _ = Format.printf "@[Compiling policy [size=%d]...@]%!"
+        (NetKAT_Semantics.size p)
+      in
+      let c_time, i = profile (fun () -> compile p) in
+      let _ = Format.printf "@[Done [ctime=%fs dsize=%d]@\n@]%!"
+        c_time (size i)
+      in
+      i
+
+    let with_generate (sw : SDN_Types.switchId) i =
+      let open NetKAT_LocalCompiler in
+      let _ = Format.printf "@[Generating table for switch %Ld...@]%!" sw in
+      let t_time, t = profile (fun () -> to_table sw i) in
+      let _ = Format.printf "@[Done [ttime=%fs tsize=%d]@\n@]%!"
+        t_time (List.length t) in
       t
 
     let flowtable (sw : SDN_Types.switchId) t =
@@ -147,15 +166,15 @@ module Dump = struct
       Format.printf "@[%a@\n@\n@]%!" NetKAT_Pretty.format_policy p
 
     let local f num_switches p =
+      let i = with_compile p in
       let rec loop switch_id =
         if switch_id > num_switches then ()
         else begin
-          let swL = Int64.of_int32 switch_id in
-          let sw_p = NetKAT_Types.(Seq(Filter(Test(Switch swL)), p)) in
-          let t = with_compile swL sw_p in
-          f swL t; loop Int32.(switch_id + 1l)
-        end in
-      loop 0l
+          let t = with_generate switch_id i in
+          f switch_id t; loop Int64.(switch_id + 1L)
+        end
+      in
+      loop 0L
 
     let all sw_num p =
       policy p;
@@ -165,6 +184,7 @@ module Dump = struct
       local (fun x y -> ()) sw_num p
 
     let main level num_switches filename =
+      Format.set_margin 200;
       match level with
         | All -> with_file (all num_switches) filename
         | Policies -> with_file policy filename
@@ -190,6 +210,14 @@ let run_cmd : unit Cmdliner.Term.t * Cmdliner.Term.info =
     let doc = "enable per-switch L2 learning" in
     Arg.(value & flag & info ["learn"] ~doc)
   in
+  let no_discovery =
+    let doc = "disable topology and host discovery" in
+    Arg.(value & flag & info ["disable-discovery"] ~doc)
+  in
+  let no_host =
+    let doc = "disable host discovery" in
+    Arg.(value & flag & info ["disable-host-discovery"] ~doc)
+  in
   let policy =
     let doc = "file containing a static NetKAT policy" in
     Arg.(value & (pos 0 (some file) None) & info [] ~docv:"FILE" ~doc)
@@ -200,14 +228,14 @@ let run_cmd : unit Cmdliner.Term.t * Cmdliner.Term.info =
     Arg.(value & opt (some int) None & info ["policy-queue-size"] ~docv:"SIZE" ~doc)
   in
   let doc = "start a controller that will serve the static policy" in
-  Term.(pure Run.main $ update $ learn $ policy_queue_size $ policy),
+  Term.(pure Run.main $ update $ learn $ no_discovery $ no_host $ policy_queue_size $ policy),
   Term.info "run" ~doc
 
 let dump_cmd : unit Cmdliner.Term.t * Cmdliner.Term.info =
   let doc = "dump per-switch compiler results and statistics" in
   let switch_id =
     let doc = "the maximum switch id in the policy" in
-    Arg.(required & (pos 0 (some int32) None) & info [] ~docv:"NUM_SWITCHES" ~doc)
+    Arg.(required & (pos 0 (some int64) None) & info [] ~docv:"NUM_SWITCHES" ~doc)
   in
   let level =
     let doc = "Dump all compiler information (default)" in

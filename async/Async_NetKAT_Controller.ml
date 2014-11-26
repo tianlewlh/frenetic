@@ -6,6 +6,7 @@ module Net = Async_NetKAT.Net
 module Controller = Async_OpenFlow.OpenFlow0x01.Controller
 module Stage = Async_OpenFlow.Stage
 module SDN = SDN_Types
+module M = OpenFlow0x01.Message
 
 type switchId = SDN_Types.switchId
 
@@ -35,6 +36,7 @@ exception Assertion_failed of string
 
 type t = {
   ctl : Controller.t;
+  dis : Discovery.t;
   txn : Txn.t;
   nib : Net.Topology.t ref;
   mutable policy : NetKAT_Types.policy;
@@ -44,8 +46,8 @@ type t = {
 let bytes_to_headers
   (port_id : SDN_Types.portId)
   (bytes : Cstruct.t)
-  : NetKAT_Types.HeadersValues.t =
-  let open NetKAT_Types.HeadersValues in
+  : NetKAT_Semantics.HeadersValues.t =
+  let open NetKAT_Semantics.HeadersValues in
   let open Packet in
   let pkt = Packet.parse bytes in
   { location = NetKAT_Types.Physical port_id
@@ -62,20 +64,19 @@ let bytes_to_headers
   }
 
 let headers_to_actions
-  (h_new:NetKAT_Types.HeadersValues.t)
-  (h_old:NetKAT_Types.HeadersValues.t)
+  (h_new:NetKAT_Semantics.HeadersValues.t)
+  (h_old:NetKAT_Semantics.HeadersValues.t)
   : SDN_Types.action list =
   let open SDN_Types in
   let g p acc f =
     if (Field.get f h_new) = (Field.get f h_old)
       then acc
       else (p (Field.get f h_new))::acc in
-  let init = match h_new.NetKAT_Types.HeadersValues.location with
-     | NetKAT_Types.Pipe p ->
-       raise (Assertion_failed (Printf.sprintf
-         "Controller.headers_to_action: impossible pipe location \"%s\"" p))
-     | NetKAT_Types.Physical p -> [Output(Physical(p))] in
-  NetKAT_Types.HeadersValues.Fields.fold
+  let init = match h_new.NetKAT_Semantics.HeadersValues.location with
+    | NetKAT_Types.Physical p -> [Output(Physical(p))]
+    | _ -> assert false
+  in
+  NetKAT_Semantics.HeadersValues.Fields.fold
     ~init
     ~location:(fun acc f -> acc)
     ~ethSrc:(g (fun v -> Modify(SetEthSrc v)))
@@ -91,11 +92,12 @@ let headers_to_actions
 
 exception Unsupported_mod of string
 
-let packet_sync_headers (pkt:NetKAT_Types.packet) : NetKAT_Types.packet * bool =
+let packet_sync_headers (pkt:NetKAT_Semantics.packet) : NetKAT_Semantics.packet * bool =
+  let open NetKAT_Semantics in
   let open NetKAT_Types in
   let change = ref false in
   let g p q acc f =
-    let v = Field.get f pkt.headers in
+    let v = Field.get f pkt.NetKAT_Semantics.headers in
     if p v acc then
       acc
     else begin
@@ -132,10 +134,85 @@ let packet_sync_headers (pkt:NetKAT_Types.packet) : NetKAT_Types.packet * bool =
     | SDN_Types.Buffered(n, _) -> SDN_Types.Buffered(n, Packet.marshal packet')
   }, !change)
 
+let pattern_matches_pred pattern pred =
+  let matches v = function
+    | None    -> true
+    | Some(u) -> u = v
+  in
+  let open NetKAT_Types in
+  let rec loop p k =
+    match pred with
+    | True  -> k true
+    | False -> k false
+    | And(p1, p2) -> loop p1 (fun x -> if x then loop p2 k else k false)
+    | Or (p1, p2) -> loop p1 (fun x -> if x then k true else loop p2 k)
+    | Neg p1      -> loop p1 (fun x -> k (not x))
+    | Test hv ->
+      let open OpenFlow0x01_Core in
+      begin match hv, pattern with
+      | Switch              _ , _
+      | Location(Query      _), _
+      | Location(Pipe       _), _ -> assert false
+      | Location(Physical   v), { inPort = mv } ->
+        begin match mv with
+        | None    -> true
+        | Some(u) -> v = Int32.of_int_exn u
+        end
+      | EthSrc              v , { dlSrc = mv } -> matches v mv
+      | EthDst              v , { dlDst = mv } -> matches v mv
+      | EthType             v , { dlTyp = mv } -> matches v mv
+      | Vlan                v , { dlVlan = mv } -> matches (Some v) mv
+      | VlanPcp             v , { dlVlanPcp = mv } -> matches v mv
+      | IPProto             v , { nwProto = mv } -> matches v mv
+      | IP4Src         (v, m) , { nwSrc = mv }
+      | IP4Dst         (v, m) , { nwDst = mv } ->
+        begin match mv with
+        | None -> true
+        | Some(u) ->
+          let n = match u.m_mask with None -> 32l | Some n -> Int32.(32l - m) in
+          let open SDN_Types.Pattern in
+          Ip.less_eq (v, m) (u.m_value, n)
+        end
+      | TCPSrcPort          v , { tpSrc = mv } -> matches v mv
+      | TCPDstPort          v , { tpDst = mv } -> matches v mv
+      end
+  in
+  loop pred (fun x -> x)
+
 let send t c_id msg =
   Controller.send t c_id msg
   >>| function
     | `Sent _ -> ()
+    | `Drop exn -> raise exn
+
+let barrier (t:t) (c_id:Controller.Client_id.t) ()
+  : [`Disconnect of Sexp.t | `Complete ] Deferred.t =
+  Txn.send t.txn c_id M.BarrierRequest
+  >>= function
+    | `Sent ivar ->
+      begin Ivar.read ivar
+      >>| function
+        | `Result M.BarrierReply -> `Complete
+        | `Result _              -> assert false
+        | `Disconnect exn_       -> `Disconnect exn_
+      end
+    | `Drop exn -> raise exn
+
+let stats (t:t) (c_id:Controller.Client_id.t) () =
+  let open OpenFlow0x01_Stats in
+  let ireq =
+    let open OpenFlow0x01_Core in
+    { sr_of_match = match_all; sr_table_id = 0xff; sr_out_port = None }
+  in
+  Txn.send t.txn c_id (M.StatsRequestMsg (IndividualRequest ireq))
+  >>= function
+    | `Sent ivar ->
+      begin Ivar.read ivar
+      >>| function
+        | `Result (M.StatsReplyMsg (IndividualFlowRep is)) -> `Result is
+        | `Result _             -> assert false
+        | `Disconnect exn_      -> `Disconnect exn_
+      end
     | `Drop exn -> raise exn
 
 let port_desc_useable (pd : OpenFlow0x01.PortDescription.t) : bool =
@@ -146,6 +223,7 @@ let port_desc_useable (pd : OpenFlow0x01.PortDescription.t) : bool =
 
 let to_event (w_out : (switchId * SDN_Types.pktOut) Pipe.Writer.t)
   : (t, Controller.f, NetKAT_Types.event) Stage.t =
+  let open NetKAT_Semantics in
   let open NetKAT_Types in
   fun t evt -> match evt with
     | `Connect (c_id, feats) ->
@@ -189,11 +267,12 @@ let to_event (w_out : (switchId * SDN_Types.pktOut) Pipe.Writer.t)
             (* XXX(seliopou): What if the packet's modified? Should buf_id be
              * exposed to the application?
              * *)
-            let pis, phys = NetKAT_Semantics.eval_pipes pkt0 local in
+            let pis, qus, phys = NetKAT_Semantics.eval_pipes pkt0 local in
             let outs = Deferred.List.iter phys ~f:(fun pkt1 ->
               let acts = headers_to_actions pkt1.headers pkt0.headers in
               let out  = (switch_id, (payload, Some(port_id), acts)) in
               Pipe.write w_out out) in
+            (* XXX(seliopou): queries? *)
             outs >>= fun _ ->
             return (List.map pis ~f:(fun (pipe, pkt2) ->
               let pkt3, changed = packet_sync_headers pkt2 in
@@ -232,8 +311,6 @@ let to_event (w_out : (switchId * SDN_Types.pktOut) Pipe.Writer.t)
       end
 
 module BestEffort = struct
-  module M = OpenFlow0x01.Message
-
   let install_flows_for (t : Controller.t) c_id table =
     let to_flow_mod p f = M.FlowModMsg (SDN_OpenFlow0x01.from_flow p f) in
     let priority = ref 65536 in
@@ -252,7 +329,7 @@ module BestEffort = struct
       | `Sent _   -> ()
 
   let bring_up_switch (t : Controller.t) (sw_id : SDN.switchId) (policy : NetKAT_Types.policy) =
-    let table = NetKAT_LocalCompiler.(to_table (compile sw_id policy)) in
+    let table = NetKAT_LocalCompiler.(to_table sw_id (compile policy)) in
     Monitor.try_with ~name:"BestEffort.bring_up_switch" (fun () ->
       let c_id = Controller.client_id_of_switch_exn t sw_id in
       delete_flows_for t c_id >>= fun () ->
@@ -270,7 +347,6 @@ module BestEffort = struct
 end
 
 module PerPacketConsistent = struct
-  module M = OpenFlow0x01.Message
   open SDN_Types
 
   let specialize_action ver internal_ports actions =
@@ -309,19 +385,6 @@ module PerPacketConsistent = struct
           List.map x ~f:(specialize_action ver internal_ports))
       })
 
-  let barrier (t : t) (c_id : Controller.Client_id.t) ()
-    : [`Disconnect of Sexp.t | `Complete ] Deferred.t =
-    Txn.send t.txn c_id M.BarrierRequest
-    >>= function
-      | `Sent ivar ->
-        begin Ivar.read ivar
-        >>| function
-          | `Result M.BarrierReply -> `Complete
-          | `Result _              -> assert false
-          | `Disconnect exn_       -> `Disconnect exn_
-        end
-      | `Drop exn -> raise exn
-
   let clear_policy_for (t : Controller.t) (ver : int) sw_id =
     let open OpenFlow0x01_Core in
     let clear_version_message = M.FlowModMsg { SDN_OpenFlow0x01.from_flow 0
@@ -342,7 +405,7 @@ module PerPacketConsistent = struct
 
   let internal_install_policy_for (t : t) (ver : int) pol (sw_id : switchId) =
     Monitor.try_with ~name:"PerPacketConsistent.internal_install_policy_for" (fun () ->
-      let table0 = NetKAT_LocalCompiler.(to_table (compile sw_id pol)) in
+      let table0 = NetKAT_LocalCompiler.(to_table sw_id (compile pol)) in
       let table1 = specialize_internal_to
         ver (TUtil.internal_ports !(t.nib) sw_id) table0 in
       assert (List.length table1 > 0);
@@ -400,7 +463,7 @@ module PerPacketConsistent = struct
 
   let edge_install_policy_for (t : t) ver pol (sw_id : switchId) : unit Deferred.t =
     Monitor.try_with ~name:"PerPacketConsistent.edge_install_policy_for" (fun () ->
-      let table = NetKAT_LocalCompiler.(to_table (compile sw_id pol)) in
+      let table = NetKAT_LocalCompiler.(to_table sw_id (compile pol)) in
       let edge_table = specialize_edge_to
         ver (TUtil.internal_ports !(t.nib) sw_id) table in
       Log.debug ~tags
@@ -463,7 +526,7 @@ end
 let send_pkt_out (ctl : Controller.t) (sw_id, pkt_out) =
   Monitor.try_with ~name:"send_pkt_out" (fun () ->
     let c_id = Controller.client_id_of_switch_exn ctl sw_id in
-    Controller.send ctl c_id (0l, OpenFlow0x01.Message.PacketOutMsg
+    Controller.send ctl c_id (0l, M.PacketOutMsg
       (SDN_OpenFlow0x01.from_packetOut pkt_out)))
   >>= function
     | Ok (`Sent x)    -> return ()
@@ -479,18 +542,19 @@ let send_pkt_out (ctl : Controller.t) (sw_id, pkt_out) =
 let start app ?(port=6633) ?(update=`BestEffort) ?(policy_queue_size=0) () =
   let open Stage in
   Controller.create ~max_pending_connections ~port ()
-  >>> fun ctl ->
-    (* Build up the application by adding topology discovery into the mix. Make
-     * the evaluation sequential so that the application can benefit from any
-     * topology updates caused by the network event.
-     * *)
-    let d_ctl, topo = Discovery.create () in
-    let app = Async_NetKAT.union ~how:`Sequential topo (Discovery.guard app) in
+  >>= fun ctl ->
+    let d_ctl, d_stage, d_app = Discovery.create () in
+    let app =
+      let open Async_NetKAT in
+      let guarded_app = guard' (neg (Discovery.managed_traffic d_ctl)) app in
+      union d_app guarded_app
+    in
 
     (* Create the controller struct to contain all the state of the controller.
      * *)
     let t = {
       ctl = ctl;
+      dis = d_ctl;
       txn = Txn.create ctl;
       nib = ref (Net.Topology.empty ());
       policy = Async_NetKAT.default app;
@@ -515,22 +579,14 @@ let start app ?(port=6633) ?(update=`BestEffort) ?(policy_queue_size=0) () =
       let features = local (fun t -> t.ctl) Controller.features in
       let txns     = local (fun t -> t.txn) Txn.stage in
       let events   = to_event s_pkt_out in
-      features >=> txns >=> events in
+      let discover = local (fun t -> t.nib) d_stage in
+      features >=> txns >=> events >=> discover in
 
     (* Initialize the application to produce an event callback and
      * Pipe.Reader.t's for packet out messages and policy updates.
      * *)
     let recv, callback = Async_NetKAT.run app t.nib () in
-
-    (* The discovery application itself will generate events, so the actual
-     * event stream must be a combination of switch events and synthetic
-     * topology discovery events. Pipe.interleave will wait until one of the
-     * pipes is readable, take a batch, and send it along.
-     *
-     * Whatever happens, happens. Can't stop won't stop.
-     * *)
-    let network_events = run stages t (Controller.listen ctl) in
-    let events = Pipe.interleave [Discovery.events d_ctl; network_events] in
+    let events = run stages t (Controller.listen ctl) in
 
     (* Pick a method for updating the network. Each method needs to be able to
      * implement a policy across the entire network as well as handle new
@@ -596,4 +652,43 @@ let start app ?(port=6633) ?(update=`BestEffort) ?(policy_queue_size=0) () =
     let open Deferred in
     don't_wait_for (Pipe.iter  events      handler);                (* input  *)
     don't_wait_for (Pipe.iter  pkt_outs    (send_pkt_out ctl));     (* output *)
-    don't_wait_for (Pipe.iter' recv.update (implement_policy' t))   (* output *)
+    don't_wait_for (Pipe.iter' recv.update (implement_policy' t));  (* output *)
+
+    return t
+  ;;
+
+let query ?(ignore_drops=true) pred t =
+  let pkt, byte = (ref 0L, ref 0L) in
+  Deferred.List.iter ~how:`Parallel (TUtil.switch_ids !(t.nib)) ~f:(fun sw_id ->
+    match Optimize.specialize_pred sw_id pred with
+    | NetKAT_Types.False -> return ()
+    | pred  -> stats t (Controller.client_id_of_switch_exn t.ctl sw_id) ()
+      >>| function
+        | `Result flows ->
+          List.iter flows (fun f ->
+            let open OpenFlow0x01_Stats in
+            (* When ignore_drops is true, then packet and byte counts of the
+             * flow do not contribute to the total. *)
+            if ((not ignore_drops) || f.actions <> []) &&
+                pattern_matches_pred f.of_match pred then begin
+              pkt  := Int64.(!pkt + f.packet_count);
+              byte := Int64.(!byte + f.byte_count)
+            end)
+        | `Disconnect exn_ ->
+          Log.error ~tags "Unable to complete query: %s" (Sexp.to_string exn_))
+  >>| fun () -> (!pkt, !byte)
+
+let nib t =
+  !(t.nib)
+
+let enable_discovery t =
+  Discovery.start t.dis
+
+let disable_discovery t =
+  Discovery.stop t.dis
+
+let enable_host_discovery t =
+  Discovery.(Host.start t.dis.host_ctl)
+
+let disable_host_discovery t =
+  Discovery.(Host.stop t.dis.host_ctl)

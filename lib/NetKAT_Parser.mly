@@ -20,6 +20,7 @@
 %token NOT QMARK
 %token AND OR
 %token TRUE FALSE
+%token PIPE QUERY
 %token ALL FWD STAR
 %token NONE
 %token EQUALS
@@ -48,9 +49,9 @@
 
 %type <NetKAT_Types.policy> program
 
-%start predicate
+%start pred_program
 
-%type <NetKAT_Types.pred> predicate
+%type <NetKAT_Types.pred> pred_program
 
 %%
 
@@ -82,8 +83,10 @@ int64_value :
 port_value :
   | int32_value
       { Location(Physical $1) }
-  | IDENT
-      { Location(Pipe $1) }
+  | PIPE LPAREN IDENT RPAREN
+      { Location(Pipe $3) }
+  | QUERY LPAREN IDENT RPAREN
+      { Location(Query $3) }
 
 mac_value :
   | MACADDR
@@ -92,7 +95,7 @@ mac_value :
       { $1 }
 
 vlan_value :
-  | INT16
+  | int16_value
       { Int32.to_int $1 }
   | NONE
       { Int32.to_int vlan_none }
@@ -128,9 +131,9 @@ upredicate:
 xpredicate:
   | LPAREN predicate RPAREN
       { $2 }
-  | STAR
+  | TRUE
       { True }
-  | NONE 
+  | FALSE
       { False }
   | SWITCH EQUALS int64_value
       { Test(Switch $3) }
@@ -230,10 +233,10 @@ xpolicy:
   | LPAREN policy RPAREN 
       { $2 }
 
-predicate :
-  | xpredicate EOF  { $1 }
+pred_program :
+  | predicate EOF  { $1 }
 
-program : 
+program :
   | policy EOF  { $1 }
 
 %%
