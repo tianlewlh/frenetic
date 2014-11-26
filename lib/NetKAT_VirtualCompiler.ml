@@ -2,6 +2,7 @@ open NetKAT_Types
 open Optimize
 
 module Tbl = Core.Std.Hashtbl.Poly
+module Sexp = Core.Std.Sexp
 
 (* auxilliary list functions *)
 let inters xs ys = List.find_all (fun x -> List.mem x ys) xs
@@ -56,10 +57,11 @@ type vloc = vswitchId * vportId
 type ('a, 'b) node =
   | InPort of 'a * 'b
   | OutPort of 'a * 'b
+with sexp
 
 (* virtual vertex *)
 module VV = struct
-  type t = (vswitchId, vportId) node
+  type t = (vswitchId, vportId) node with sexp
   let compare = compare
   let equal = (=)
   let hash  = Hashtbl.hash
@@ -67,20 +69,22 @@ end
 
 (* physical vertex *)
 module PV = struct
-  type t = (switchId, portId) node
+  type t = (switchId, portId) node with sexp
   let compare = compare
   let equal = (=)
   let hash = Hashtbl.hash
 end
 
 (* product vertex *)
-type product_vertex =
+type prod_vertex =
   | ConsistentIn of VV.t * PV.t
   | InconsistentOut of VV.t * PV.t
   | ConsistentOut of VV.t * PV.t
   | InconsistentIn of VV.t * PV.t
+with sexp
+
 module V = struct
-  type t = product_vertex
+  type t = prod_vertex with sexp
   let compare = compare
   let equal = (=)
   let hash = Hashtbl.hash
@@ -90,44 +94,68 @@ end
 
 (* Module to build graphs from topologies (physical or virtual) *)
 module GraphBuilder (Params : sig
-  type switch
-  type port
+  type switch with sexp
+  type port with sexp
   val with_loops : bool
   val locs_from_pred : pred -> (switch * port) list
   val links_from_topo : policy -> (switch * port * switch * port) list
 end) (Vlabel : Graph.Sig.COMPARABLE with type t = (Params.switch, Params.port) node) = struct
-  include Params
-  module G = Graph.Persistent.Digraph.Concrete(Vlabel)
-  include G
+  module G = struct
+    include Params
+    include Graph.Persistent.Digraph.Concrete(Vlabel)
 
-  let add_vertex' v g = add_vertex g v
-  let add_edge' v1 v2 g = add_edge g v1 v2
+    let sexp_of_vertex v = sexp_of_node sexp_of_switch sexp_of_port (V.label v)
+    let add_vertex' v g = add_vertex g v
+    let add_edge' v1 v2 g = add_edge g v1 v2
 
-  let add_loc (sw, pt) g =
-    let in_pt = G.V.create (InPort (sw, pt)) in
-    let out_pt = G.V.create (OutPort (sw, pt)) in
-    g |> add_vertex' in_pt
-      |> add_vertex' out_pt
+    let add_loc (sw, pt) g =
+      let in_pt = V.create (InPort (sw, pt)) in
+      let out_pt = V.create (OutPort (sw, pt)) in
+      g |> add_vertex' in_pt
+        |> add_vertex' out_pt
 
-  let add_link (sw1, pt1, sw2, pt2) g =
-    g |> add_loc (sw1, pt1)
-      |> add_loc (sw2, pt2)
-      |> add_edge' (G.V.create (OutPort (sw1, pt1))) (G.V.create (InPort (sw2, pt2)))
+    let add_link (sw1, pt1, sw2, pt2) g =
+      g |> add_loc (sw1, pt1)
+        |> add_loc (sw2, pt2)
+        |> add_edge' (V.create (OutPort (sw1, pt1))) (V.create (InPort (sw2, pt2)))
 
-  let connect_switch_ports' v1 v2 g =
-    match V.label v1, V.label v2 with
-    | InPort (sw, _), OutPort (sw', _) when sw=sw' -> add_edge g v1 v2
-    | OutPort (sw, pt), InPort (sw', pt') when with_loops && sw=sw' && pt=pt' -> add_edge g v1 v2
-    | _ -> g
+    let connect_switch_ports' v1 v2 g =
+      match V.label v1, V.label v2 with
+      | InPort (sw, _), OutPort (sw', _) when sw=sw' -> add_edge g v1 v2
+      | OutPort (sw, pt), InPort (sw', pt') when with_loops && sw=sw' && pt=pt' -> add_edge g v1 v2
+      | _ -> g
 
-  let connect_switch_ports g =
-    fold_vertex (fun v1 g' -> fold_vertex (fun v2 g' -> connect_switch_ports' v1 v2 g') g g') g g
+    let connect_switch_ports g =
+      fold_vertex (fun v1 g' -> fold_vertex (fun v2 g' -> connect_switch_ports' v1 v2 g') g g') g g
 
-  let make (ingress : pred) (egress : pred) (topo : policy) =
-    G.empty |> List.fold_right add_link (links_from_topo topo)
+    let make (ingress : pred) (egress : pred) (topo : policy) =
+      empty |> List.fold_right add_link (links_from_topo topo)
             |> List.fold_right add_loc (locs_from_pred ingress)
             |> List.fold_right add_loc (locs_from_pred egress)
             |> connect_switch_ports
+
+    (* dot file encoding *)
+    let graph_attributes g = []
+    let default_vertex_attributes v = []
+    let vertex_name v = "\"" ^ (Sexp.to_string (sexp_of_vertex v)) ^ "\""
+    let vertex_attributes v = []
+
+    let get_subgraph v =
+      let open Graph.Graphviz.DotAttributes in
+      match V.label v with
+      | InPort (sw, _) | OutPort (sw, _) -> Some {
+        sg_name = Sexp.to_string (sexp_of_switch sw);
+        sg_attributes = [];
+        sg_parent = None
+      }
+
+    let default_edge_attributes e = []
+    let edge_attributes e = []
+  end
+
+  module Dot = Graph.Graphviz.Dot(G)
+  include G
+
 end
 
 
@@ -136,8 +164,8 @@ end
 module G = struct
 
   module Virt = GraphBuilder (struct
-    type switch = vswitchId
-    type port = vportId
+    type switch = vswitchId with sexp
+    type port = vportId with sexp
     let with_loops = false
     let rec locs_from_pred pred =
       match pred with
@@ -152,8 +180,8 @@ module G = struct
   end) (VV)
 
   module Phys = GraphBuilder (struct
-    type switch = switchId
-    type port = portId
+    type switch = switchId with sexp
+    type port = portId with sexp
     let with_loops = true
     let rec locs_from_pred pred =
       match pred with
@@ -167,7 +195,31 @@ module G = struct
       | _ -> failwith "Virtual Compiler: not a valid physical topology"
   end) (PV)
 
-  module Prod = Graph.Persistent.Digraph.Concrete(V)
+  module Prod = struct
+    module G = struct
+      include Graph.Persistent.Digraph.Concrete(V)
+      let graph_attributes g = []
+      let default_vertex_attributes v = []
+      let vertex_name v = "\"" ^ (Sexp.to_string (sexp_of_prod_vertex (V.label v))) ^ "\""
+      let vertex_attributes v = []
+      let get_subgraph v =
+        let open Graph.Graphviz.DotAttributes in
+        match V.label v with
+        | ConsistentIn (_, pv) | ConsistentOut (_, pv)
+        | InconsistentIn (_, pv) | InconsistentOut (_, pv) ->
+          begin match pv with
+          | InPort (sw, _) | OutPort (sw, _) -> Some {
+            sg_name = Sexp.to_string (sexp_of_switchId sw);
+            sg_attributes = [];
+            sg_parent = None
+          }
+          end
+      let default_edge_attributes e = []
+      let edge_attributes e = []
+    end
+    module Dot = Graph.Graphviz.Dot(G)
+    include G
+  end
 
 end
 
@@ -439,19 +491,40 @@ let generate_fabrics vrel v_topo v_ing v_eg p_topo p_ing p_eg  =
   let pruned_graph = prune_product_graph prod_graph in
   let fabric_graph = fabric_graph_of_pruned pruned_graph prod_ing cost in
   let fabric = fabric_of_fabric_graph fabric_graph prod_ing path_oracle in
+  let vg_file = "vg.dot" in
+  let pg_file = "pg.dot" in
+  let g_raw_file = "g_raw.dot" in
+  let g_pruned_file = "g_pruned.dot" in
+  let g_fabric_file = "g_fabric.dot" in
+  let vg_ch = open_out vg_file in
+  let pg_ch = open_out pg_file in
+  let g_raw_ch = open_out g_raw_file in
+  let g_pruned_ch = open_out g_pruned_file in
+  let g_fabric_ch = open_out g_fabric_file in
   begin
     Printf.printf "|V(vgraph)|: %i\n" (G.Virt.nb_vertex vgraph);
     Printf.printf "|E(vgraph)|: %i\n" (G.Virt.nb_edges vgraph);
+    G.Virt.Dot.output_graph vg_ch vgraph;
+    close_out vg_ch;
     Printf.printf "|V(pgraph)|: %i\n" (G.Phys.nb_vertex pgraph);
     Printf.printf "|E(pgraph)|: %i\n" (G.Phys.nb_edges pgraph);
+    G.Phys.Dot.output_graph pg_ch pgraph;
+    close_out pg_ch;
     Printf.printf "|V(prod_graph)|: %i\n" (G.Prod.nb_vertex prod_graph);
     Printf.printf "|E(prod_graph)|: %i\n" (G.Prod.nb_edges prod_graph);
+    G.Prod.Dot.output_graph g_raw_ch prod_graph;
+    close_out g_raw_ch;
     Printf.printf "|V(pruned_graph)|: %i\n" (G.Prod.nb_vertex pruned_graph);
     Printf.printf "|E(pruned_graph)|: %i\n" (G.Prod.nb_edges pruned_graph);
+    G.Prod.Dot.output_graph g_pruned_ch pruned_graph;
+    close_out g_pruned_ch;
     Printf.printf "|V(fabric_graph)|: %i\n" (G.Prod.nb_vertex fabric_graph);
     Printf.printf "|E(fabric_graph)|: %i\n" (G.Prod.nb_edges fabric_graph);
+    G.Prod.Dot.output_graph g_fabric_ch fabric_graph;
+    close_out g_fabric_ch;
     fabric
   end
+
 
 (*
   Vingress defines the virtual ingress. Examples:
@@ -510,4 +583,4 @@ let compile (vpolicy : policy) (vrel : pred)
   Printf.printf "vpolicy: %s\n" (NetKAT_Pretty.string_of_policy vpolicy);
   Printf.printf "vtopo: %s\n" (NetKAT_Pretty.string_of_policy vtopo);
   devirtualize_pol (mk_big_seq [ing; mk_star (mk_seq p t); p])
-  
+
