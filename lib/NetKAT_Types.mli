@@ -11,6 +11,7 @@ type portId = SDN_Types.portId with sexp
 type payload = SDN_Types.payload with sexp
 type vswitchId = int64 with sexp
 type vportId = int64 with sexp
+type varId = string with sexp
 
 (** {2 Policies} *)
 
@@ -35,6 +36,7 @@ type header_val =
   | TCPDstPort of tpPort
   | VSwitch of vswitchId
   | VPort of vportId
+  | Local of varId * int64
   with sexp
 
 type pred =
