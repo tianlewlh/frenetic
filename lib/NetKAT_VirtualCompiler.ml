@@ -57,11 +57,6 @@ type ('a, 'b) node =
   | InPort of 'a * 'b
   | OutPort of 'a * 'b
 
-(* extend ports with self-loops *)
-type extendedPort =
-  | RealPort of portId
-  | Loop of portId (* when looping, remember last port! *)
-
 (* virtual vertex *)
 module VV = struct
   type t = (vswitchId, vportId) node
@@ -72,7 +67,7 @@ end
 
 (* physical vertex *)
 module PV = struct
-  type t = (switchId, extendedPort) node
+  type t = (switchId, portId) node
   let compare = compare
   let equal = (=)
   let hash = Hashtbl.hash
@@ -97,9 +92,9 @@ end
 module GraphBuilder (Params : sig
   type switch
   type port
+  val with_loops : bool
   val locs_from_pred : pred -> (switch * port) list
   val links_from_topo : policy -> (switch * port * switch * port) list
-  val loop_of : port -> port
 end) (Vlabel : Graph.Sig.COMPARABLE with type t = (Params.switch, Params.port) node) = struct
   include Params
   module G = Graph.Persistent.Digraph.Concrete(Vlabel)
@@ -121,29 +116,17 @@ end) (Vlabel : Graph.Sig.COMPARABLE with type t = (Params.switch, Params.port) n
 
   let connect_switch_ports' v1 v2 g =
     match V.label v1, V.label v2 with
-    | InPort (sw, _), OutPort (sw', _) when sw=sw' -> add_edge' v1 v2 g
+    | InPort (sw, _), OutPort (sw', _) when sw=sw' -> add_edge g v1 v2
+    | OutPort (sw, pt), InPort (sw', pt') when with_loops && sw=sw' && pt=pt' -> add_edge g v1 v2
     | _ -> g
 
   let connect_switch_ports g =
     fold_vertex (fun v1 g' -> fold_vertex (fun v2 g' -> connect_switch_ports' v1 v2 g') g g') g g
 
-  let add_loop v g =
-    match V.label v with
-    | OutPort _ -> g
-    | InPort (sw, pt) ->
-       let inLoop = G.V.create (InPort (sw, loop_of pt)) in
-       let outLoop = G.V.create (OutPort (sw, loop_of pt)) in
-       g |> add_vertex' inLoop
-         |> add_vertex' outLoop
-         |> add_edge' inLoop outLoop
-         |> add_edge' outLoop inLoop
-         |> add_edge' v outLoop
-
-  let make ?(with_loops=false) (ingress : pred) (egress : pred) (topo : policy) =
+  let make (ingress : pred) (egress : pred) (topo : policy) =
     G.empty |> List.fold_right add_link (links_from_topo topo)
             |> List.fold_right add_loc (locs_from_pred ingress)
             |> List.fold_right add_loc (locs_from_pred egress)
-            |> (fun g -> if with_loops then fold_vertex add_loop g g else g)
             |> connect_switch_ports
 end
 
@@ -155,6 +138,7 @@ module G = struct
   module Virt = GraphBuilder (struct
     type switch = vswitchId
     type port = vportId
+    let with_loops = false
     let rec locs_from_pred pred =
       match pred with
       | And (Test (VSwitch vsw), Test (VPort vpt)) -> [(vsw, vpt)]
@@ -165,27 +149,22 @@ module G = struct
       | VLink (vsw1,vpt1,vsw2,vpt2) -> [(vsw1,vpt1,vsw2,vpt2)]
       | Union (t1, t2) -> links_from_topo t1 @ links_from_topo t2
       | _ -> failwith "Virtual Compiler: not a valid virtual topology"
-    let loop_of _ = assert false
   end) (VV)
 
   module Phys = GraphBuilder (struct
     type switch = switchId
-    type port = extendedPort
+    type port = portId
+    let with_loops = true
     let rec locs_from_pred pred =
       match pred with
-      | And (Test (Switch sw), Test (Location (Physical pt))) -> [(sw, RealPort pt)]
+      | And (Test (Switch sw), Test (Location (Physical pt))) -> [(sw, pt)]
       | Or (p1, p2) -> locs_from_pred p1 @ locs_from_pred p2
       | _ -> failwith "Virtual Compiler: not a valid physical ingress/egress predicate"
     let rec links_from_topo topo =
       match topo with
-      | Link (sw1,pt1,sw2,pt2) -> [(sw1, RealPort pt1, sw2, RealPort pt2)]
+      | Link (sw1,pt1,sw2,pt2) -> [(sw1, pt1, sw2, pt2)]
       | Union (t1, t2) -> links_from_topo t1 @ links_from_topo t2
       | _ -> failwith "Virtual Compiler: not a valid physical topology"
-
-    let loop_of expt =
-      match expt with
-      | RealPort pt -> Loop pt
-      | Loop _ -> assert false
   end) (PV)
 
   module Prod = Graph.Persistent.Digraph.Concrete(V)
@@ -198,7 +177,7 @@ let parse_vrel (vrel : pred) =
   let rec parse_physical pred alist =
     match pred with
     | Or (p1, p2) -> parse_physical p1 alist |> parse_physical p2
-    | And (Test (Switch sw), Test (Location (Physical pt))) -> (sw, RealPort pt) :: alist
+    | And (Test (Switch sw), Test (Location (Physical pt))) -> (sw, pt) :: alist
     | _ -> failwith "Virtual Compiler: not a valid virtual relation"
   in
   let rec parse pred alist =
@@ -357,8 +336,7 @@ let match_vloc' vv =
 
 let match_ploc' pv =
   match G.Phys.V.label pv with
-  | InPort (sw, RealPort pt) | OutPort (sw, RealPort pt)
-  | InPort (sw, Loop pt) | OutPort (sw, Loop pt) -> match_ploc (sw, pt)
+  | InPort (sw, pt) | OutPort (sw, pt) -> match_ploc (sw, pt)
 
 let set_vloc' vv =
   match G.Virt.V.label vv with
@@ -366,17 +344,19 @@ let set_vloc' vv =
 
 let rec policy_of_path path =
   match path with
-  | (OutPort (sw1, RealPort pt1), (InPort (sw2, RealPort pt2))) :: path' ->
-     mk_seq (Link (sw1, pt1, sw2, pt2)) (policy_of_path path')
-  | (OutPort (sw, Loop _), (InPort (sw', _))) :: path' ->
+  | (OutPort (sw1, pt1), (InPort (sw2, pt2))) :: path' ->
+     if sw1 = sw2 then begin
+       assert (pt1 = pt2);
+       policy_of_path path'
+     end
+     else
+       mk_seq (Link (sw1, pt1, sw2, pt2)) (policy_of_path path')
+  | (InPort (sw, pt), (OutPort (sw', pt'))) :: path' ->
      assert (sw = sw');
-     policy_of_path path'
-  | (InPort (sw, _), (OutPort (sw', RealPort pt))) :: path' ->
-     assert (sw = sw');
-     mk_seq (Mod (Location (Physical (pt)))) (policy_of_path path')
-  | (InPort (sw, _), (OutPort (sw', Loop _))) :: path' ->
-     assert (sw = sw');
-     policy_of_path path'
+     if pt = pt' then
+       policy_of_path path'
+     else
+       mk_seq (Mod (Location (Physical (pt')))) (policy_of_path path')
   | [] -> id
   | _ -> assert false
 
@@ -408,7 +388,7 @@ let fabric_of_fabric_graph g ing path_oracle =
 
 let generate_fabrics vrel v_topo v_ing v_eg p_topo p_ing p_eg  =
   let vgraph = G.Virt.make v_ing v_eg v_topo in
-  let pgraph = G.Phys.make ~with_loops:true p_ing p_eg p_topo in
+  let pgraph = G.Phys.make p_ing p_eg p_topo in
   let prod_ing, prod_graph = make_product_graph vgraph pgraph v_ing vrel in
 
   let unwrap_e e = (G.Phys.V.label (G.Phys.E.src e), G.Phys.V.label (G.Phys.E.dst e)) in
@@ -422,8 +402,7 @@ let generate_fabrics vrel v_topo v_ing v_eg p_topo p_ing p_eg  =
     let weight e =
       match unwrap_e e with
       | InPort _, OutPort _ -> 0
-      | OutPort (_, Loop _), _ -> 0
-      | OutPort _, InPort _ -> 1
+      | OutPort (sw, _), InPort (sw', _) -> if sw=sw' then 0 else 1
       | _, _ -> assert false
     let compare = compare
     let add x y = x + y
