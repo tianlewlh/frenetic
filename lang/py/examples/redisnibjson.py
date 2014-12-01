@@ -63,7 +63,6 @@ class RedisNib:
         except self.r.ConnectionError as e:
             print(e)
             sys.exit(-1)
-        self.r.flushall() # wipe previous entries from database
 
     ######  Helper functions to manipulate JSON  #######
     ######  TODO: sepearate module?              #######
