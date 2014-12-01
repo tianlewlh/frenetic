@@ -11,6 +11,7 @@ import redisnibjson # schema represented as JSON
 import time
 import redis
 import print_redis
+import ast
 
 """Shortest Path Routing Based on Redis NIB"""
 
@@ -52,8 +53,6 @@ def main():
     r = print_redis.connect()
     #get the real edges not in-memory
 
-    print r.keys('*')
-
     while(True):
         #p = all_pairs_shortest_path(
 
@@ -62,9 +61,9 @@ def main():
         edges = []
 
         for e in nib.edges():
-            nodes = e.split("@")
-            edges.append(nodes[0],nodes[1],r.get('edgeattr:%s' % e))
-
+            #get this edge's attribute dict (string) then convert to dict object
+            dict_attr = ast.literal_eval(r.get("edgeattr:{}@{}".format(e[0],e[1])))
+            edges.append((e[0],e[1],dict_attr))
         p = shortest_path(edges,'1','00:00:00:00:00:02')
         if p:
             print p
