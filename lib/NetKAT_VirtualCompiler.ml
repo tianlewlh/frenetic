@@ -176,7 +176,8 @@ module G = struct
       match vtopo with
       | VLink (vsw1,vpt1,vsw2,vpt2) -> [(vsw1,vpt1,vsw2,vpt2)]
       | Union (t1, t2) -> links_from_topo t1 @ links_from_topo t2
-      | _ -> failwith "Virtual Compiler: not a valid virtual topology"
+      | _ -> if vtopo = drop then [] else
+        failwith ("Virtual Compiler: not a valid virtual topology")
   end) (VV)
 
   module Phys = GraphBuilder (struct
@@ -192,7 +193,7 @@ module G = struct
       match topo with
       | Link (sw1,pt1,sw2,pt2) -> [(sw1, pt1, sw2, pt2)]
       | Union (t1, t2) -> links_from_topo t1 @ links_from_topo t2
-      | _ -> failwith "Virtual Compiler: not a valid physical topology"
+      | _ -> if topo = drop then [] else failwith "Virtual Compiler: not a valid physical topology"
   end) (PV)
 
   module Prod = struct
@@ -582,5 +583,5 @@ let compile (vpolicy : policy) (vrel : pred)
   Printf.printf "fin: %s\n" (NetKAT_Pretty.string_of_policy fin);
   Printf.printf "vpolicy: %s\n" (NetKAT_Pretty.string_of_policy vpolicy);
   Printf.printf "vtopo: %s\n" (NetKAT_Pretty.string_of_policy vtopo);
-  devirtualize_pol (mk_big_seq [ing; mk_star (mk_seq p t); p])
+  devirtualize_pol (mk_big_seq [ing; p; mk_star (mk_seq t p)])
 
