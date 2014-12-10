@@ -17,7 +17,7 @@ Virtual:
 vtopo = 1@2=>>2@1
 ving_pol = vswitch:=1; vport:=0
 ving = vswitch=1 and vport=0
-veg  = vswitch=1 and vport=2
+veg  = vswitch=2 and vport=9
 
 Relation:
 =========
