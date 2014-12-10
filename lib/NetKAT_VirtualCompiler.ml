@@ -489,9 +489,9 @@ let generate_fabrics vrel v_topo v_ing v_eg p_topo p_ing p_eg  =
   let cost v1 v2 =
     snd (get_path_and_distance (pv_of_v v1) (pv_of_v v2)) in
 
-  let pruned_graph = prune_product_graph prod_graph in
-  let fabric_graph = fabric_graph_of_pruned pruned_graph prod_ing cost in
-  let fabric = fabric_of_fabric_graph fabric_graph prod_ing path_oracle in
+  let pruned_graph = lazy (prune_product_graph prod_graph) in
+  let fabric_graph = lazy (fabric_graph_of_pruned (Lazy.force pruned_graph) prod_ing cost) in
+  let fabric = lazy (fabric_of_fabric_graph (Lazy.force fabric_graph) prod_ing path_oracle) in
   let vg_file = "vg.dot" in
   let pg_file = "pg.dot" in
   let g_raw_file = "g_raw.dot" in
@@ -515,15 +515,15 @@ let generate_fabrics vrel v_topo v_ing v_eg p_topo p_ing p_eg  =
     Printf.printf "|E(prod_graph)|: %i\n" (G.Prod.nb_edges prod_graph);
     G.Prod.Dot.output_graph g_raw_ch prod_graph;
     close_out g_raw_ch;
-    Printf.printf "|V(pruned_graph)|: %i\n" (G.Prod.nb_vertex pruned_graph);
-    Printf.printf "|E(pruned_graph)|: %i\n" (G.Prod.nb_edges pruned_graph);
-    G.Prod.Dot.output_graph g_pruned_ch pruned_graph;
+    Printf.printf "|V(pruned_graph)|: %i\n" (G.Prod.nb_vertex (Lazy.force pruned_graph));
+    Printf.printf "|E(pruned_graph)|: %i\n" (G.Prod.nb_edges (Lazy.force pruned_graph));
+    G.Prod.Dot.output_graph g_pruned_ch (Lazy.force pruned_graph);
     close_out g_pruned_ch;
-    Printf.printf "|V(fabric_graph)|: %i\n" (G.Prod.nb_vertex fabric_graph);
-    Printf.printf "|E(fabric_graph)|: %i\n" (G.Prod.nb_edges fabric_graph);
-    G.Prod.Dot.output_graph g_fabric_ch fabric_graph;
+    Printf.printf "|V(fabric_graph)|: %i\n" (G.Prod.nb_vertex (Lazy.force fabric_graph));
+    Printf.printf "|E(fabric_graph)|: %i\n" (G.Prod.nb_edges (Lazy.force fabric_graph));
+    G.Prod.Dot.output_graph g_fabric_ch (Lazy.force fabric_graph);
     close_out g_fabric_ch;
-    fabric
+    Lazy.force fabric
   end
 
 
