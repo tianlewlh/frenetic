@@ -293,13 +293,14 @@ module BestEffort = struct
 
   let bring_up_switch (t : Controller.t) (sw_id : SDN.switchId) (policy : NetKAT_Types.policy) =
     let table = NetKAT_LocalCompiler.(to_table (compile sw_id policy)) in
+    Log.info ~tags "[policy] Implementing policy update for switch %Lu" sw_id;
     Monitor.try_with ~name:"BestEffort.bring_up_switch" (fun () ->
       delete_flows_for t sw_id >>= fun () ->
       install_flows_for t sw_id table)
     >>= function
       | Ok x       -> return x
       | Error _exn ->
-        Log.debug ~tags
+        Log.info ~tags
           "switch %Lu: disconnected while attempting to bring up... skipping" sw_id;
         Log.flushed () >>| fun () -> Printf.eprintf "%s\n%!" (Exn.to_string _exn)
 
@@ -574,6 +575,7 @@ let start app ?(port=6633) ?(update=`BestEffort) ?(policy_queue_size=0) () =
       if policy_queue_size > 0 then
         Log.info ~tags "[policy] Processing queue of size %d" len;
 
+      Log.info ~tags "[policy] Implementing policy update";
       t.policy <- Queue.get q (len - 1);
       implement_policy t t.policy
     in
