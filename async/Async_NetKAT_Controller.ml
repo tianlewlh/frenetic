@@ -297,11 +297,13 @@ module BestEffort = struct
   let bring_up_switch (t : Controller.t) (sw_id : SDN.switchId) ?old new_r =
     match old with
     | Some(old_r) when LC.equal (restrict sw_id old_r) (restrict sw_id new_r) ->
-      Log.debug ~tags
-        "[policy] Skipping identical policy update for swithc %Lu" sw_id ;
+      Log.info ~tags
+        "[policy] Skipping identical policy update for switch %Lu" sw_id ;
       return ()
     | _ ->
       let table = LC.(to_table sw_id new_r) in
+      Log.info ~tags
+        "[policy] Implementing policy update for switch %Lu" sw_id ;
       Monitor.try_with ~name:"BestEffort.bring_up_switch" (fun () ->
         delete_flows_for t sw_id >>= fun () ->
         install_flows_for t sw_id table)
@@ -590,10 +592,12 @@ let start app ?(port=6633) ?(update=`BestEffort) ?(policy_queue_size=0) () =
       t.repr   <- LC.compile (Queue.get q (len - 1));
 
       if LC.equal old t.repr then begin
-        Log.debug ~tags "[policy] Skipping identical policy update";
+        Log.info ~tags "[policy] Skipping identical policy update";
         return ()
-      end else
+      end else begin
+        Log.info ~tags "[policy] Implementing policy update";
         implement_policy t ~old t.repr
+      end
     in
 
     (* This is the main event handler for the controller. First it sends
