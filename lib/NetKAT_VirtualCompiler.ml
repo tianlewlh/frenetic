@@ -574,14 +574,15 @@ let compile (vpolicy : policy) (vrel : pred)
   let (fout_set, fin_set) = generate_fabrics vrel vtopo ving veg ptopo ping peg in
   let fout = mk_big_union fout_set in
   let fin = mk_big_union fin_set in
-  let ing = mk_seq ving_pol (Filter ving) in
+  let ing = mk_big_seq [Filter ping; ving_pol; Filter ving] in
+  let eg = Filter (mk_and veg peg) in
   let p = mk_seq vpolicy fout in
   let t = mk_seq vtopo fin in
   (* ing; (p;t)^*; p  *)
-  Printf.printf "ing: %s\n" (NetKAT_Pretty.string_of_policy ing);
-  Printf.printf "fout: %s\n" (NetKAT_Pretty.string_of_policy fout);
-  Printf.printf "fin: %s\n" (NetKAT_Pretty.string_of_policy fin);
-  Printf.printf "vpolicy: %s\n" (NetKAT_Pretty.string_of_policy vpolicy);
-  Printf.printf "vtopo: %s\n" (NetKAT_Pretty.string_of_policy vtopo);
-  devirtualize_pol (mk_big_seq [ing; p; mk_star (mk_seq t p)])
+  Printf.printf "ing: %s\n\n" (NetKAT_Pretty.string_of_policy ing);
+  Printf.printf "fout: %s\n\n" (NetKAT_Pretty.string_of_policy fout);
+  Printf.printf "fin: %s\n\n" (NetKAT_Pretty.string_of_policy fin);
+  Printf.printf "vpolicy: %s\n\n" (NetKAT_Pretty.string_of_policy vpolicy);
+  Printf.printf "vtopo: %s\n\n" (NetKAT_Pretty.string_of_policy vtopo);
+  devirtualize_pol (mk_big_seq [ing; mk_star (mk_seq p t); p; eg])
 

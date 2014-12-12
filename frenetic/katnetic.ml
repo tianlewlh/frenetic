@@ -96,14 +96,11 @@ module Virtual = struct
       NetKAT_VirtualCompiler.compile vpolicy vrel vtopo ving_pol ving veg ptopo ping peg in
     let local_physical_pol =
       NetKAT_GlobalCompiler.compile ping peg global_physical_pol in
+    let compiled_physical_pol = NetKAT_LocalCompiler.compile local_physical_pol in
     let switches = NetKAT_Misc.switches_of_policy
       (Optimize.mk_seq (NetKAT_Types.Filter ping) global_physical_pol) in
     let tables =
-      List.map
-        (fun sw -> NetKAT_LocalCompiler.compile local_physical_pol
-                   |> NetKAT_LocalCompiler.to_table sw
-                   |> (fun t -> (sw, t)))
-        switches in
+      List.map (fun sw -> (sw, NetKAT_LocalCompiler.to_table sw compiled_physical_pol)) switches in
     let print_table (sw, t) =
       Format.fprintf fmt "[global] Flowtable for Switch %Ld:@\n@[%a@]@\n@\n"
         sw
