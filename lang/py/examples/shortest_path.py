@@ -29,14 +29,14 @@ nib = redisnibjson.RedisNib()  # using json for now
 #            In which case, should cls store state of edges to efficiently update rather than reinit
 
     
-def all_pairs_shortest_paths(edges):
-    G = nx.Graph()
+def all_pairs_shortest_paths(G,edges):
+    G.clear()
     G.add_edges_from(edges)
     path = nx.all_pairs_shortest_path(G)
     return path
 
-def shortest_path(edges,src,dst):
-    G = nx.Graph()
+def shortest_path(G,edges,src,dst):
+    G.clear()
     G.add_edges_from(edges)
     try:
         path = nx.shortest_path(G,src,dst)
@@ -49,7 +49,9 @@ def shortest_path(edges,src,dst):
 # serialize to JSON if we wanted to compile to switch tables
 
 def main():
-    
+   
+    G = nx.Graph()
+
     r = print_redis.connect()
     #get the real edges not in-memory
 
@@ -64,9 +66,14 @@ def main():
             #get this edge's attribute dict (string) then convert to dict object
             dict_attr = ast.literal_eval(r.get("edgeattr:{}@{}".format(e[0],e[1])))
             edges.append((e[0],e[1],dict_attr))
-        p = shortest_path(edges,'1','00:00:00:00:00:02')
-        if p:
-            print p
+            print e[0], e[1], dict_attr
+        # p = shortest_path(G,edges,'1','00:00:00:00:00:02')
+        # if p:
+        #     a = zip(p[:-1],p[1:])
+        #     #print G.edges()
+        #     for e in a:
+        #         # print e[0],e[1],G[e[0]][e[1]]      
+        #         pass
         time.sleep(10)
             
 if  '__main__':

@@ -63,14 +63,21 @@ def probe():
     for node in nib.nodes():
         if(nib.node(node,'device') == 'switch'):
             for port in nib.node_ports(node):
-                # (nb): NOTE: Force node,port into dst,src fields of Ethernet packet. Temporary only!
+               # (nb): NOTE: Force node,port into dst,src fields of Ethernet packet. Temporary only!
                 dp = ethernet.ethernet(dst=int(node),src=int(port),ethertype=0x3366)
                 p = packet.Packet()
                 p.add_protocol(dp)
                 p.serialize()
+                # print int(node),int(port),p
+                # print p, typei(ip)
+                # payload = bytearray([0,0,0,0,0,0,0,0,0,0,0,0x66,0x33]) + struct.pack('L',int(node)) + struct.pack('L',int(node))
+                # payload = "{}_{}".format(node,port)
+                # print "Payload: {}".format(payload)
+                # webkat.pkt_out(int(node),int(port),payload)
                 webkat.pkt_out(int(node),int(port),p.data)
-    
-    print nib.edges() #(data=True)
+                print "Sending to {},{}".format(int(node),int(port))
+                return
+    print nib.edges()
     return
 
 class TopologyDiscovery(webkat.App):
@@ -89,19 +96,34 @@ class TopologyDiscovery(webkat.App):
     def port_down(self,switch_id,port_id):
 	nib.add_port(switch_id,port_id)
         webkat.update(policy())
-    def packet_in(self,switch_id,port_id,packet):
-	p = get_ethernet(packet)
+    def packet_in(self,switch_id,port_id,packet_in): 
+        # print "packet_in", packet_in, len(packet_in)
+        pkt = packet.Packet(packet_in) 
+        p = get_ethernet(pkt)
         if p.ethertype == ETH_TYPE_ARP: 
-           host_id = p.src
-           nib.add_node(host_id,device='host')
-	   nib.add_edge(switch_id,host_id,outport=port_id,inport=0)
-	   nib.add_edge(host_id,switch_id,outport=0,inport=port_id)
+               host_id = p.src
+               nib.add_node(host_id,device='host')
+               nib.add_edge(switch_id,host_id,outport=port_id,inport=0)
+               nib.add_edge(host_id,switch_id,outport=0,inport=port_id)
         elif p.ethertype == ETH_TYPE_DISCOVERY_PACKET:
-	    # (nb): Remove ryu.packet's MAC string format
+           print "pkt", pkt, "sw", switch_id, "pt", port_id
+           # else: #(nb): Then it is a Discovery Packet
+           # print "payload",payload
+           # (nb): Remove ryu.packet's MAC string format
            src_sw = int((p.dst).replace(':',''),16)
    	   src_port = int((p.src).replace(':',''),16)
-   	   nib.add_edge(src_sw,switch_id,outport=src_port,inport=port_id)
-	   nib.add_edge(switch_id,src_sw,outport=port_id,inport=src_port)	
+           # print src_sw, p.dst
+           # print src_port,p.src
+           # print "({},{},{},{})".format(src_sw,switch_id,src_port,port_id),"and","({},{},{},{})".format(switch_id,src_sw,port_id,src_port)
+           # print p.dst, p.src, switch_id,port_id
+           # print "Packet from {},{} ; I am {},{}".format(switch_id,port_id,src_sw,src_port)
+           # payload = packet.split("_")
+           # src_sw = payload[0]
+           # src_port = payload[1]
+           nib.add_edge(src_sw,switch_id,outport=src_port,inport=port_id)
+           nib.add_edge(switch_id,src_sw,outport=port_id,inport=src_port)
+           # nib.add_edge(src_sw,switch_id,outport=src_port,inport=port_id)
+	   # nib.add_edge(switch_id,src_sw,outport=port_id,inport=src_port)	
 	pass
 	# print "NIB: %s" % json_graph.node_link_data(nib)
 	webkat.update(policy())
