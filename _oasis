@@ -33,7 +33,6 @@ Library netkat
     threads
   InternalModules:
     Flowterp,
-    Optimize,
     Util
   Modules:
     NetKAT_Lexer,
@@ -43,7 +42,8 @@ Library netkat
     NetKAT_Pretty,
     NetKAT_Semantics,
     NetKAT_Types,
-    NetKAT_Misc
+    NetKAT_Misc,
+    Optimize
 
 Library syntax
   Path: syntax
