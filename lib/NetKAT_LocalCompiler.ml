@@ -629,6 +629,8 @@ end
 
 include Repr
 
+let clear_cache () = Repr.T.clear_cache ()
+
 let compile =
   of_policy
 
