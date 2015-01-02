@@ -37,13 +37,13 @@ module Field = struct
     | EthDst -> "EthDst"
     | Vlan -> "Vlan"
     | VlanPcp -> "VlanPcp"
+    | Local id -> "Local<" ^ id ^ ">"
     | EthType -> "EthType"
     | IPProto -> "IPProto"
     | IP4Src -> "IP4Src"
     | IP4Dst -> "IP4Dst"
     | TCPSrcPort -> "TCPSrcPort"
     | TCPDstPort -> "TCPDstPort"
-    | Local id -> "Local<" ^ id ^ ">"
 end
 
 (** Packet field values.
@@ -233,7 +233,6 @@ module Pattern = struct
       (Field.IP4Dst, Value.(Mask(Int64.of_int32 nwAddr, 32 + (Int32.to_int_exn mask))))
     | TCPSrcPort(tpPort) -> (Field.TCPSrcPort, Value.of_int tpPort)
     | TCPDstPort(tpPort) -> (Field.TCPDstPort, Value.of_int tpPort)
-    | VSwitch _ | VPort _ -> raise Non_local
     | Local (varId, value) -> (Field.Local varId, Value.of_int64 value)
 
   let to_hv (f, v) =
@@ -528,63 +527,18 @@ module Repr = struct
     else
       T.sum t u
 
-(*   let pull_up_stars p =
-    match p with
-    | Seq (Seq (Star _ as r, x), y) -
-    | Union (q,r) -> Union (pull_up_stars q, pull_up_stars r)
-    | Star q -> Star (pull_up_stars q)
-    | _ -> expr2 *)
-
   let star t =
     (* Compute [star t] by iterating to a fixed point.
 
        NOTE that the equality check is not semantic equivalence, so this may not
        terminate when expected. In practice though, it should. *)
-    let rec loop i acc =
-      let acc' = seq acc acc in
-      if T.equal acc acc'
-        then acc
-        else (Printf.printf "\t%d\n%!" i; loop (i+1) acc')
-    in
-    Printf.printf "Enter star->\n%!";
-    loop 0 (union (T.const Action.one) t)
-(*     let rec loop i acc power =
-      let power' = seq t power in
-      let acc' = union acc power' in
-      if T.equal acc acc'
-        then acc
-        else (Printf.printf "\t%d\n%!" i; loop (i+1) acc' power')
-    in
-    Printf.printf "Enter star->\n%!";
-    loop 0 (T.const Action.one) (T.const Action.one) *)
-
-  let star_right t1 t2 =
-    (* Compute t1; t2* by iterating to a fixed point.
-
-       NOTE that the equality check is not semantic equivalence, so this may not
-       terminate when expected. In practice though, it should. *)
-    let rec loop i acc prod =
-      let prod' = seq prod t2 in
-      let acc' = union acc prod' in
-      if T.equal acc acc'
-        then acc
-        else (Printf.printf "\t%d\n%!" i; loop (i+1) acc' prod')
-    in
-    Printf.printf "Enter star_right->\n%!";
-    loop 0 t1 t1
-
-  let star_left t1 t2 =
-    (* Compute t1*; t2 by iterating to a fixed point.
-
-       NOTE that the equality check is not semantic equivalence, so this may not
-       terminate when expected. In practice though, it should. *)
     let rec loop acc =
-      let acc' = union t2 (seq t1 acc) in
+      let acc' = union (T.const Action.one) (seq t acc) in
       if T.equal acc acc'
         then acc
         else loop acc'
     in
-    loop t2
+    loop t
 
   let rec of_pred p =
     let open NetKAT_Types in
@@ -602,12 +556,9 @@ module Repr = struct
     | Filter   p  -> of_pred p
     | Mod      m  -> of_mod  m
     | Union(p, q) -> union (of_policy p) (of_policy q)
-    (* | Seq (p, Seq (q, r)) -> of_policy (Seq (Seq (p, q), r)) *)
-    (* | Seq (p, Star r) -> star_right (of_policy p) (of_policy r) *)
-    (* | Seq (Star p, r) -> star_left (of_policy p) (of_policy r) *)
     | Seq  (p, q) -> seq   (of_policy p) (of_policy q)
     | Star p      -> star  (of_policy p)
-    | Link _ | VLink _ -> raise Non_local
+    | Link _ -> raise Non_local
 
   let to_policy =
     T.fold
