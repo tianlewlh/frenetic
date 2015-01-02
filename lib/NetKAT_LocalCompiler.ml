@@ -361,12 +361,18 @@ module Action = struct
        surface syntax program, then this assumption likely holds. *)
     let to_int = Int64.to_int_exn in
     let to_int32 = Int64.to_int32_exn in
-    let t = Par.filter t ~f:(fun seq ->
+    let t = Par.filter_map t ~f:(fun seq ->
       (* Queries are equivalent to drop, so remove any [Seq.t]'s from the
-       * [Par.t] that set the location to a query. *)
+       * [Par.t] that set the location to a query.
+       *
+       * Pipe locations are no longer relevant to compilation, so rewrite all
+       * all of them to the empty string. This will allow multiple singleton
+       * [Seq.t]'s of port location assignments in a [Par.t] to be collapsed
+       * into into one. *)
       match Seq.find seq Field.Location with
-      | Some(Value.Query _) -> false
-      | _                   -> true)
+      | Some(Value.Query _) -> None
+      | Some(Value.Pipe  _) -> Some(Seq.add seq Field.Location (Value.Pipe ""))
+      | _                   -> Some(seq))
     in
     let to_port p = match in_port with
       | Some(p') when p = p' -> SDN.InPort
@@ -624,6 +630,29 @@ module Repr = struct
     T.to_string
 end
 
+(** An internal module that implements an interpreter for a [Repr.t]. This
+    interpreter uses [Repr.t] operations to find the [Action.t] that should
+    apply to the packet. Once that's found, it converts the [Action.t] into a
+    NetKAT policy and falls back to the [NetKAT_Semantics] module to process the
+    actions and produce the final [PacketSet.t] *)
+module Interp = struct
+  open NetKAT_Semantics
+
+  let eval_to_action (packet:packet) (t:Repr.t) =
+    let hvs = HeadersValues.to_hvs packet.headers in
+    let sw  = (Field.Switch, Value.of_int64 packet.switch) in
+    let vs  = List.map hvs ~f:Pattern.of_hv in
+    match Repr.T.(peek (restrict (sw :: vs) t)) with
+    | None    -> assert false
+    | Some(r) -> r
+
+  let eval (p:packet) (t:Repr.t) =
+    NetKAT_Semantics.eval p Action.(to_policy (eval_to_action p t))
+
+  let eval_pipes (p:packet) (t:Repr.t) =
+    NetKAT_Semantics.eval_pipes p Action.(to_policy (eval_to_action p t))
+end
+
 include Repr
 
 let compile =
@@ -705,3 +734,9 @@ let size =
   Repr.T.fold
     (fun r -> 1)
     (fun v t f -> 1 + t + f)
+
+let eval =
+  Interp.eval
+
+let eval_pipes =
+  Interp.eval_pipes
