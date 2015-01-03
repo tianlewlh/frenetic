@@ -80,6 +80,9 @@ val equal : t -> t -> bool
 val size : t -> int
 (** [size t] returns the size of [t]. *)
 
+(* compressed_size / uncompressed_size *)
+val compression_ratio : t -> int * int
+
 val to_policy : t -> policy
 (** [to_policy t] returns a NetKAT policy that is semantically equivalent to
     [t]. If was generated from compiling a policy [p], it is not guarateed that
@@ -106,6 +109,8 @@ val eval_pipes
     third is a list of packets that are at physical locations. *)
 
 val clear_cache : unit -> unit
+
+val to_dotfile : t -> string -> unit
 
 module Field : sig
 
