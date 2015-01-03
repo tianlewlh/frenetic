@@ -30,7 +30,8 @@ Library netkat
     sexplib.syntax,
     str,
     tdk,
-    threads
+    threads,
+    yojson
   InternalModules:
     Flowterp,
     Util
