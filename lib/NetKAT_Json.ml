@@ -64,6 +64,9 @@ let rec to_json_pol (pol : policy) : json = match pol with
   | Union (p, q) -> `Assoc [("type", `String "union");
                             ("lhs", to_json_pol p);
                             ("rhs", to_json_pol q)]
+  | DisjointUnion (p, q) -> `Assoc [("type", `String "disjoint");
+                                    ("lhs", to_json_pol p);
+                                    ("rhs", to_json_pol q)]
   | Seq (p, q) -> `Assoc [("type", `String "seq");
                           ("lhs", to_json_pol p);
                           ("rhs", to_json_pol q)]
@@ -125,6 +128,8 @@ let rec from_json_pol (json : json) : policy =
                        json |> member "rhs" |> from_json_pol)
    | "seq" -> Seq (from_json_pol (json |> member "lhs"),
                    from_json_pol (json |> member "rhs"))
+   | "disjoint" -> DisjointUnion (from_json_pol (json |> member "lhs"),
+                                  from_json_pol (json |> member "rhs"))
    | "star" -> Star (from_json_pol (json |> member "pol"))
    | "link" -> Link (json |> member "sw1" |> to_int |> Int64.of_int,
                      json |> member "pt1" |> to_int |> Int32.of_int_exn,
