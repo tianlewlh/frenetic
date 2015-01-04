@@ -44,7 +44,8 @@ Library netkat
     NetKAT_Semantics,
     NetKAT_Types,
     NetKAT_Misc,
-    Optimize
+    Optimize,
+    NetKAT_Json
 
 Library syntax
   Path: syntax
