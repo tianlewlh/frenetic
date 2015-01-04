@@ -135,7 +135,9 @@ let size (pol:policy) : int =
       | Filter pr -> f (size_pred pr + 1)
       | Mod(_) -> f 1
       | Union(pol1, pol2)
+      | DisjointUnion (pol1, pol2)
       | Seq(pol1, pol2) -> size pol1 (fun spol1 -> size pol2 (fun spol2 -> f (1 + spol1 + spol2)))
+
       | Star(pol) -> size pol (fun spol -> f (1 + spol))
       | Link(_,_,_,_) -> f 5 in
   size pol (fun spol -> spol)
@@ -199,6 +201,12 @@ let rec eval (pkt : packet) (pol : policy) : PacketSet.t = match pol with
   | Seq (pol1, pol2) ->
     PacketSet.fold (eval pkt pol1) ~init:PacketSet.empty
       ~f:(fun set pkt' -> PacketSet.union set (eval pkt' pol2))
+  | DisjointUnion (pol1, pol2) ->
+    let pks1 = eval pkt pol1 in
+    if PacketSet.is_empty pks1 then
+      eval pkt pol2
+    else
+      pks1
   | Star pol ->
     let rec loop acc =
       let f set pkt' = PacketSet.union (eval pkt' pol) set in
@@ -207,7 +215,7 @@ let rec eval (pkt : packet) (pol : policy) : PacketSet.t = match pol with
       if PacketSet.equal acc acc'' then acc else loop acc'' in
       loop (PacketSet.singleton pkt)
   | Link(sw,pt,sw',pt') ->
-    PacketSet.empty (* JNF *)
+    PacketSet.empty (* TODO(JNF): yeah no *)
 
 let eval_pipes (packet:packet) (pol:NetKAT_Types.policy)
   : (string * packet) list *
