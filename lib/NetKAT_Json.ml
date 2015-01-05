@@ -51,11 +51,9 @@ let rec to_json_pred (pred : pred) : json = match pred with
                       ("header", to_json_header h);
                       ("value", to_json_value h)]
   | And (a, b) -> `Assoc [("type", `String "and");
-                          ("lhs", to_json_pred a);
-                          ("rhs", to_json_pred b)]
+                          ("preds", `List [to_json_pred a; to_json_pred b])]
   | Or (a, b) -> `Assoc [("type", `String "or");
-                         ("lhs", to_json_pred a);
-                         ("rhs", to_json_pred b)]
+                         ("preds", `List [to_json_pred a; to_json_pred b])]
   | Neg a -> `Assoc [("type", `String "neg");
                      ("pred", to_json_pred a)]
 
@@ -66,14 +64,13 @@ let rec to_json_pol (pol : policy) : json = match pol with
                      ("header", to_json_header h);
                      ("value", to_json_value h)]
   | Union (p, q) -> `Assoc [("type", `String "union");
-                            ("lhs", to_json_pol p);
-                            ("rhs", to_json_pol q)]
-  | DisjointUnion (p, q) -> `Assoc [("type", `String "disjoint");
-                                    ("lhs", to_json_pol p);
-                                    ("rhs", to_json_pol q)]
-  | Seq (p, q) -> `Assoc [("type", `String "seq");
-                          ("lhs", to_json_pol p);
-                          ("rhs", to_json_pol q)]
+                            ("pols", `List [to_json_pol p; to_json_pol q])]
+  | DisjointUnion (p, q) ->
+    `Assoc [("type", `String "disjoint");
+            ("pols", `List [to_json_pol p; to_json_pol q])]
+  | Seq (p, q) ->
+    `Assoc [("type", `String "seq");
+           ("pols", `List [to_json_pol p; to_json_pol q])]
   | Star p -> `Assoc [("type", `String "star");
                       ("pol", to_json_pol p)]
   | Link (sw1, pt1, sw2, pt2) ->
@@ -116,10 +113,10 @@ let rec from_json_pred (json : json) : pred =
   | "true" -> True
   | "false" -> False
   | "test" -> Test (from_json_header_val json)
-  | "and" -> And (json |> member "lhs" |> from_json_pred,
-                  json |> member "rhs" |> from_json_pred)
-  | "or" -> Or (json |> member "lhs" |> from_json_pred,
-                json |> member "rhs" |> from_json_pred)
+  | "and" -> mk_big_and (json |> member "preds" |> to_list
+                         |> List.map ~f:from_json_pred)
+  | "or" -> mk_big_or (json |> member "preds" |> to_list
+                       |> List.map ~f:from_json_pred)
   | "neg" -> Neg (json |> member "pred" |> from_json_pred)
   | str -> raise (Invalid_argument ("invalid predicate type " ^ str))
 
@@ -128,12 +125,13 @@ let rec from_json_pol (json : json) : policy =
    match json |> member "type" |> to_string with
    | "filter" -> Filter (json |> member "pred" |> from_json_pred)
    | "mod" -> Mod (from_json_header_val json)
-   | "union" -> mk_union (json |> member "lhs" |> from_json_pol)
-                         (json |> member "rhs" |> from_json_pol)
-   | "seq" -> mk_seq (from_json_pol (json |> member "lhs"))
-                     (from_json_pol (json |> member "rhs"))
-   | "disjoint" -> DisjointUnion (from_json_pol (json |> member "lhs"),
-                                  from_json_pol (json |> member "rhs"))
+   | "union" -> mk_big_union (json |> member "pols" |> to_list
+                              |> List.map ~f:from_json_pol)
+   | "seq" -> mk_big_seq (json |> member "pols" |> to_list
+                          |> List.map ~f:from_json_pol)
+   | "disjoint" ->
+     mk_big_disjoint_union (json |> member "pols" |> to_list
+                            |> List.map ~f:from_json_pol)
    | "star" -> Star (from_json_pol (json |> member "pol"))
    | "link" -> Link (json |> member "sw1" |> to_int |> Int64.of_int,
                      json |> member "pt1" |> to_int |> int_to_uint32,
