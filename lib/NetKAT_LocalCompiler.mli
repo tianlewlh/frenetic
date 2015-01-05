@@ -125,4 +125,6 @@ module Field : sig
 
   val set_order : t list -> unit
 
+  val to_string : t -> string
+
 end
