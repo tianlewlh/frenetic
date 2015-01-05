@@ -1,3 +1,4 @@
+open Core.Std
 open NetKAT_Types
 open SDN_Types
 open Yojson.Basic
@@ -12,6 +13,9 @@ val from_json_string : string -> policy
 
 val to_json_string : policy -> string
 
+val policy_from_json_channel : In_channel.t -> policy
+
 val flowtable_to_json : flowTable -> Yojson.Safe.json
 
 val flowtable_to_json_string : flowTable -> string
+

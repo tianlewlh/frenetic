@@ -1,7 +1,11 @@
+let int_to_uint32 = Int32.of_int
+
 open Core.Std
 open SDN_Types
 open NetKAT_Types
 open Yojson.Basic
+open Optimize
+
 
 let to_json_value (h : header_val) : json = match h with
   | Switch n
@@ -87,7 +91,7 @@ let from_json_header_val (json : json) : header_val =
   | "location" ->
     let value = match value |> member "type" |> to_string with
       | "physical" -> Physical (value |> member "port" |>
-                                to_int |> Int32.of_int_exn)
+                                to_int |> int_to_uint32)
       | "pipe" -> Pipe (value |> member "name" |> to_string)
       | "query" -> Query (value |> member "name" |> to_string)
       | str -> raise (Invalid_argument ("invalid location type " ^ str))
@@ -98,10 +102,10 @@ let from_json_header_val (json : json) : header_val =
   | "vlanpcp" -> VlanPcp (value |> to_int)
   | "ethtype" -> EthType (value |> to_int)
   | "ipproto" -> IPProto (value |> to_int)
-  | "ip4src" -> IP4Src (value |> member "addr" |> to_int |> Int32.of_int_exn,
-                        value |> member "mask" |> to_int |> Int32.of_int_exn)
-  | "ip4dst" -> IP4Dst (value |> member "addr" |> to_int |> Int32.of_int_exn,
-                        value |> member "mask" |> to_int |> Int32.of_int_exn)
+  | "ip4src" -> IP4Src (value |> member "addr" |> to_int |> int_to_uint32,
+                        value |> member "mask" |> to_int |> int_to_uint32)
+  | "ip4dst" -> IP4Dst (value |> member "addr" |> to_int |> int_to_uint32,
+                        value |> member "mask" |> to_int |> int_to_uint32)
   | "tcpsrcport" -> TCPSrcPort (value |> to_int)
   | "tcpdstport" -> TCPDstPort (value |> to_int)
   | str -> raise (Invalid_argument ("invalid header " ^ str))
@@ -124,17 +128,17 @@ let rec from_json_pol (json : json) : policy =
    match json |> member "type" |> to_string with
    | "filter" -> Filter (json |> member "pred" |> from_json_pred)
    | "mod" -> Mod (from_json_header_val json)
-   | "union" -> Union (json |> member "lhs" |> from_json_pol,
-                       json |> member "rhs" |> from_json_pol)
-   | "seq" -> Seq (from_json_pol (json |> member "lhs"),
-                   from_json_pol (json |> member "rhs"))
+   | "union" -> mk_union (json |> member "lhs" |> from_json_pol)
+                         (json |> member "rhs" |> from_json_pol)
+   | "seq" -> mk_seq (from_json_pol (json |> member "lhs"))
+                     (from_json_pol (json |> member "rhs"))
    | "disjoint" -> DisjointUnion (from_json_pol (json |> member "lhs"),
                                   from_json_pol (json |> member "rhs"))
    | "star" -> Star (from_json_pol (json |> member "pol"))
    | "link" -> Link (json |> member "sw1" |> to_int |> Int64.of_int,
-                     json |> member "pt1" |> to_int |> Int32.of_int_exn,
+                     json |> member "pt1" |> to_int |> int_to_uint32,
                      json |> member "sw2" |> to_int |> Int64.of_int,
-                     json |> member "pt2" |> to_int |> Int32.of_int_exn)
+                     json |> member "pt2" |> to_int |> int_to_uint32)
    | str -> raise (Invalid_argument ("invalid policy type " ^ str))
 
 let to_json = to_json_pol
@@ -146,6 +150,9 @@ let to_json_string (pol : policy) : string =
   Yojson.Basic.to_string ~std:true (to_json pol)
 
 let from_json_string (str : string) : policy = from_json (from_string str)
+
+let policy_from_json_channel (chan : In_channel.t) : policy =
+  from_json (from_channel chan)
 
 let pattern_to_json (p:Pattern.t) : Yojson.Safe.json =
   let open Pattern in
@@ -256,3 +263,4 @@ let flowtable_to_json (t:flowTable) : Yojson.Safe.json =
 
 let flowtable_to_json_string (t:flowTable) : string =
   Yojson.Safe.to_string (flowtable_to_json t)
+
