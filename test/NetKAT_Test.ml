@@ -312,8 +312,8 @@ let gen_pol_3 =
      NetKAT_Arbitrary.arbitrary_tcp >>= fun packet ->
      ret_gen (fix_port p, fix_port q, fix_port r, packet))
     (fun (p,q,r,_) ->
-      Format.sprintf "p=%s\nq=%s\nr=%s\n"
-        (string_of_policy p) (string_of_policy q) (string_of_policy r))
+      (string_of_policy p) ^ " " ^ (string_of_policy q) ^ " "
+      ^ (string_of_policy r))
     testable_bool
 
 let compare_eval_output p q pkt =
@@ -322,17 +322,17 @@ let compare_eval_output p q pkt =
 
 let compare_compiler_output p q pkt =
   let open NetKAT_Semantics in
-  let ptbl = NetKAT_LocalCompiler.(to_table pkt.switch (compile p)) in
-  let qtbl = NetKAT_LocalCompiler.(to_table pkt.switch (compile q)) in
-  let cmp =
+  let ptbl = NetKAT_LocalCompiler.(to_table pkt.switch (compile p)) in 
+  let qtbl = NetKAT_LocalCompiler.(to_table pkt.switch (compile q)) in 
+  let cmp = 
     PacketSet.compare
       (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile p))))
       (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile q))))
-    = 0 in
+    = 0 in 
   if cmp then cmp
   else
-    (Format.printf "p table=%a@\n@\n%a@\n@\nq table=%a@\n@\n%a@\n@\n"
-       format_policy p format_flowTable ptbl
+    (Format.printf "p=%a@\n@\n%a@\n@\nq=%a@\n@\n%a@\n@\n"
+       format_policy p format_flowTable ptbl 
        format_policy q format_flowTable qtbl;
      cmp)
 
