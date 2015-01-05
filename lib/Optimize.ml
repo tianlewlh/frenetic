@@ -110,6 +110,14 @@ let specialize_policy sw pol =
 
 let mk_big_and = List.fold_left mk_and NetKAT_Types.True
 
+let mk_big_or = List.fold_left mk_or NetKAT_Types.False
+
 let mk_big_union = List.fold_left mk_union NetKAT_Types.drop
 
 let mk_big_seq = List.fold_left mk_seq NetKAT_Types.id
+
+let mk_big_disjoint_union lst = match lst with
+  | [] -> NetKAT_Types.drop
+  | [p] -> p
+  | p :: ps -> List.fold_left (fun p q -> NetKAT_Types.DisjointUnion (p, q)) p ps
+

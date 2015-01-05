@@ -10,5 +10,7 @@ val mk_star : policy -> policy
 val specialize_pred : switchId -> pred -> pred
 val specialize_policy : switchId -> policy -> policy
 val mk_big_and : pred list -> pred
+val mk_big_or : pred list -> pred
 val mk_big_union : policy list -> policy
 val mk_big_seq : policy list -> policy
+val mk_big_disjoint_union : policy list -> policy
