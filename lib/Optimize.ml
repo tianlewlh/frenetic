@@ -119,6 +119,12 @@ let mk_big_union = List.fold_left ~f:mk_union ~init:NetKAT_Types.drop
 
 let mk_big_seq = List.fold_left ~f:mk_seq ~init:NetKAT_Types.id
 
+let mk_big_disjoint_union lst = match lst with
+  | [] -> NetKAT_Types.drop
+  | [p] -> p
+  | p :: ps -> List.fold_left ps ~init:p
+      ~f:(fun p q -> NetKAT_Types.DisjointUnion (p, q))
+
 (* list_of_and flattens a predicate into a list of predicates, each of which
    is not an And. E.g., list_of_and (And (p, And (q, r))) = [p; q; r], if
    p, q, and r are not Ands. The other list_of_* functions are similar. *)
