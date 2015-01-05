@@ -551,10 +551,8 @@ module Repr = struct
        terminate when expected. In practice though, it should. *)
     let rec loop acc =
       let acc' = union acc (seq t acc) in
-      if T.equal acc acc'
-        then acc
-        else loop acc'
-    in
+      if T.equal acc acc' then acc
+      else loop acc' in
     loop (T.const Action.one)
 
   let rec of_pred p =

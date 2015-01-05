@@ -322,10 +322,19 @@ let compare_eval_output p q pkt =
 
 let compare_compiler_output p q pkt =
   let open NetKAT_Semantics in
-  PacketSet.compare
-    (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile p))))
-    (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile q))))
-  = 0
+  let ptbl = NetKAT_LocalCompiler.(to_table pkt.switch (compile p)) in 
+  let qtbl = NetKAT_LocalCompiler.(to_table pkt.switch (compile q)) in 
+  let cmp = 
+    PacketSet.compare
+      (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile p))))
+      (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile q))))
+    = 0 in 
+  if cmp then cmp
+  else
+    (Format.printf "p=%a@\n@\n%a@\n@\nq=%a@\n@\n%a@\n@\n"
+       format_policy p format_flowTable ptbl 
+       format_policy q format_flowTable qtbl;
+     cmp)
 
 let check gen_fn compare_fn =
   let cfg = { QuickCheck.quick with QuickCheck.maxTest = 1000 } in
