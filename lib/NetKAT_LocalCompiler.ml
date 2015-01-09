@@ -57,13 +57,76 @@ module Field = struct
   (* Initial order is the order in which fields appear in this file. *)
   let order = Array.init num_fields ~f:ident
 
+  let readable_order = ref all_fields
+
   let compare (x : t) (y : t) : int =
     Pervasives.compare order.(Obj.magic x) order.(Obj.magic y)
 
   let set_order (lst : t list) : unit =
     assert (is_valid_order lst);
+    readable_order := lst;
     List.iteri lst ~f:(fun i fld ->
       order.(Obj.magic fld) <- i)
+
+  let get_order () = !readable_order
+
+  let field_of_header_val hv = match hv with
+    | NetKAT_Types.Switch _ -> Switch
+    | NetKAT_Types.Location _ -> Location
+    | NetKAT_Types.EthSrc _ -> EthSrc
+    | NetKAT_Types.EthDst _ -> EthDst
+    | NetKAT_Types.Vlan _ -> Vlan
+    | NetKAT_Types.VlanPcp _ -> VlanPcp
+    | NetKAT_Types.EthType _ -> EthType
+    | NetKAT_Types.IPProto _ -> IPProto
+    | NetKAT_Types.IP4Src _ -> IP4Src
+    | NetKAT_Types.IP4Dst _ -> IP4Dst
+    | NetKAT_Types.TCPSrcPort _ -> TCPSrcPort
+    | NetKAT_Types.TCPDstPort _ -> TCPDstPort
+
+  let auto_order (pol : NetKAT_Types.policy) : unit =
+    let open NetKAT_Types in
+    let count_tbl =
+      match Hashtbl.Poly.of_alist (List.map all_fields ~f:(fun f -> (f, 0))) with
+      | `Ok tbl -> tbl
+      | `Duplicate_key _ -> assert false in
+    let rec f_pred size in_product pred = match pred with
+      | True -> ()
+      | False -> ()
+      | Test hv ->
+        if in_product then
+          let fld = field_of_header_val hv in
+          let n = Hashtbl.Poly.find_exn count_tbl fld in
+          let _ = Hashtbl.Poly.replace count_tbl ~key:fld ~data:(n + size) in
+          ()
+        else
+          ()
+      | Or (a, b) -> f_pred size false a; f_pred size false b
+      | And (a, b) -> f_pred size true a; f_pred size true b
+      | Neg a -> f_pred size in_product a in
+    let rec f_seq' pol lst = match pol with
+      | Mod _ -> (1, lst)
+      | Filter a -> (1, a :: lst)
+      | Seq (p, q) ->
+        let (m, lst) = f_seq' p lst in
+        let (n, lst) = f_seq' q lst in
+        (m * n, lst)
+      | Union _ | DisjointUnion _ -> (f_union pol, lst)
+    and f_seq pol =
+      let (size, preds) = f_seq' pol [] in
+      List.iter preds ~f:(f_pred size true);
+      size
+    and f_union' pol k = match pol with
+      | Mod _ -> k 1
+      | Filter _ -> k 1
+      | Union (p, q) | DisjointUnion (p, q) ->
+        f_union' p (fun m -> f_union' q (fun n -> k (m + n)))
+      | Seq _ -> k (f_seq pol)
+    and f_union pol = f_union' pol (fun n -> n) in
+    f_seq pol;
+    let cmp (_, x) (_, y) = Pervasives.compare y x in
+    let lst = List.sort ~cmp (Hashtbl.Poly.to_alist count_tbl) in
+    set_order (List.map lst ~f:(fun (fld, _) -> fld))
 
 end
 
@@ -550,12 +613,10 @@ module Repr = struct
        NOTE that the equality check is not semantic equivalence, so this may not
        terminate when expected. In practice though, it should. *)
     let rec loop acc =
-      let acc' = union (T.const Action.one) (seq t acc) in
-      if T.equal acc acc'
-        then acc
-        else loop acc'
-    in
-    loop t
+      let acc' = union acc (seq t acc) in
+      if T.equal acc acc' then acc
+      else loop acc' in
+    loop (T.const Action.one)
 
   let rec of_pred p =
     let open NetKAT_Types in
@@ -566,6 +627,9 @@ module Repr = struct
     | And(p, q) -> T.prod (of_pred p) (of_pred q)
     | Or (p, q) -> T.sum (of_pred p) (of_pred q)
     | Neg(q)    -> T.map_r Action.negate (of_pred q)
+
+  let disj left right =
+    if Action.Par.is_empty left then right else left
 
   let rec of_policy_k p k =
     let open NetKAT_Types in
@@ -578,8 +642,12 @@ module Repr = struct
     | Seq (p, q) -> of_policy_k p (fun p' ->
                       of_policy_k q (fun q' ->
                         k (seq p' q')))
-    | Star p -> of_policy_k p (fun p' -> star p')
+    | Star p -> of_policy_k p (fun p' -> k (star p'))
     | Link _ -> raise Non_local
+    | DisjointUnion (p, q) ->
+      of_policy_k p (fun u ->
+        of_policy_k q (fun v ->
+             k (T.sum_generalized disj u v)))
 
   let rec of_policy p = of_policy_k p ident
 
@@ -711,8 +779,14 @@ let size =
     (fun r -> 1)
     (fun v t f -> 1 + t + f)
 
+let compression_ratio t = (Repr.T.compressed_size t, Repr.T.uncompressed_size t)
+
 let eval =
   Interp.eval
 
 let eval_pipes =
   Interp.eval_pipes
+
+let to_dotfile t filename =
+  Out_channel.with_file filename ~f:(fun chan ->
+    Out_channel.output_string chan (Repr.T.to_dot t))

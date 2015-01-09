@@ -322,16 +322,39 @@ let compare_eval_output p q pkt =
 
 let compare_compiler_output p q pkt =
   let open NetKAT_Semantics in
-  PacketSet.compare
-    (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile p))))
-    (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile q))))
-  = 0
+  let ptbl = NetKAT_LocalCompiler.(to_table pkt.switch (compile p)) in 
+  let qtbl = NetKAT_LocalCompiler.(to_table pkt.switch (compile q)) in 
+  let cmp = 
+    PacketSet.compare
+      (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile p))))
+      (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile q))))
+    = 0 in 
+  if cmp then cmp
+  else
+    (Format.printf "p=%a@\n@\n%a@\n@\nq=%a@\n@\n%a@\n@\n"
+       format_policy p format_flowTable ptbl 
+       format_policy q format_flowTable qtbl;
+     cmp)
 
 let check gen_fn compare_fn =
   let cfg = { QuickCheck.quick with QuickCheck.maxTest = 1000 } in
   match QuickCheck.check gen_fn cfg compare_fn with
         QuickCheck.Success -> true
     | _                  -> false
+
+TEST "quickcheck NetKAT <-> JSON" =
+  let open NetKAT_Json in
+  let generate =
+    let open QuickCheck in
+    let open QuickCheck_gen in
+    let open NetKAT_Arbitrary in
+    testable_fun
+      arbitrary_lf_pol
+      (fun p -> string_of_policy p ^ "\n" ^ to_json_string p)
+      testable_bool in
+  let prop_parse_ok pol =
+    from_json (to_json pol) = pol in
+  check generate prop_parse_ok
 
 let get_masking_test =
   let ip1 = Int32.of_int(192 * 256*256*256 + 168 * 256*256 + 0 * 256 + 1 * 1) in

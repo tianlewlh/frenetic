@@ -99,12 +99,25 @@ let specialize_policy sw pol =
         loop pol1 (fun p1 -> loop pol2 (fun p2 -> k (mk_seq p1 p2)))
       | NetKAT_Types.Star pol ->
         loop pol (fun p -> k (mk_star p))
+      | NetKAT_Types.DisjointUnion (pol1, pol2) ->
+        loop pol1 (fun p1 ->
+          loop pol2 (fun p2 ->
+            (* TODO(arjun): need disjoint union axioms to implement optimizations *)
+            k (DisjointUnion (p1, p2))))
       | NetKAT_Types.Link(sw,pt,sw',pt') ->
 	failwith "Not a local policy" in
   loop pol (fun x -> x)
 
 let mk_big_and = List.fold_left mk_and NetKAT_Types.True
 
+let mk_big_or = List.fold_left mk_or NetKAT_Types.False
+
 let mk_big_union = List.fold_left mk_union NetKAT_Types.drop
 
 let mk_big_seq = List.fold_left mk_seq NetKAT_Types.id
+
+let mk_big_disjoint_union lst = match lst with
+  | [] -> NetKAT_Types.drop
+  | [p] -> p
+  | p :: ps -> List.fold_left (fun p q -> NetKAT_Types.DisjointUnion (p, q)) p ps
+

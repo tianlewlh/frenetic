@@ -49,6 +49,7 @@ type policy =
   | Seq of policy * policy
   | Star of policy
   | Link of switchId * portId * switchId * portId
+  | DisjointUnion of policy * policy
   with sexp
 
 let id = Filter True

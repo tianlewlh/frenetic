@@ -133,7 +133,7 @@ let rec token c = lexer
   | [ "()!+;=*+/" ] | ":=" | "true" | "false" | "switch" | "port" | "vlan"
     | "vlanPcp" | "ethType" | "ipProto" | "tcpSrcPort" | "tcpDstPort"
     | "ethSrc" | "ethDst" | "ip4Src"| "ip4Dst" | "&&" | "||"  | "id"
-    | "drop" | "if" | "then" | "else" | "filter" ->
+    | "drop" | "if" | "then" | "else" | "filter" | "<>" ->
       KEYWORD (L.latin1_lexeme c.lexbuf)
   | _ -> illegal c
 
