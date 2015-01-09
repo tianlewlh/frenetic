@@ -52,7 +52,7 @@ val union : t -> t -> t
     parallel composition of the two policies from which [p] and [q] were
     derived. *)
 
-val star : t -> t
+val star : ?acc:t -> t -> t
 (** [star p] returns the star of the intermediate representation [p]. The result
     is semantically equivalent to the star of the policy from which [p] was
     derived. *)

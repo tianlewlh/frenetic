@@ -624,7 +624,7 @@ module Repr = struct
     else
       T.sum t u
 
-  let star t =
+  let star ?(acc=T.const Action.one) t =
     (* Compute [star t] by iterating to a fixed point.
 
        NOTE that the equality check is not semantic equivalence, so this may not
@@ -639,7 +639,7 @@ module Repr = struct
         then acc
         else loop acc' power'
     in
-    loop (T.const Action.one) (T.const Action.one)
+    loop acc acc
 
   let rec of_pred p =
     let open NetKAT_Types in
@@ -662,6 +662,9 @@ module Repr = struct
     | Union (p, q) -> of_policy_k p (fun p' ->
                         of_policy_k q (fun q' ->
                           k (union p' q')))
+    | Seq (p, Seq (q, r)) -> of_policy_k (Seq (Seq (p, q), r)) k
+    | Seq (p, Star q) -> of_policy_k p (fun p' ->
+                           of_policy_k q (fun q' -> k (star ~acc:p' q')))
     | Seq (p, q) -> of_policy_k p (fun p' ->
                       of_policy_k q (fun q' ->
                         k (seq p' q')))
