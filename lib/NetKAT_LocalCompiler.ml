@@ -588,8 +588,24 @@ module Repr = struct
       T.(sum (prod (atom v Action.one Action.zero) t)
              (prod (atom v Action.zero Action.one) f))
 
+  let dp_fold (g : Action.t -> T.t)
+              (h : Field.t * Value.t -> T.t -> T.t -> T.t)
+              (t : T.t) : T.t =
+(*     let g' = Memo.general g in
+    let h' = Memo.general (fun (x,y,z) -> h x y z) in
+ *)
+     let tbl = Hashtbl.Poly.create () in
+     let rec f t =
+       Hashtbl.Poly.find_or_add tbl t ~default:(fun () -> f' t)
+     and f' t = match T.unget t with
+      | T.Leaf r -> g r
+      | T.Branch ((v, l), tru, fls) -> h (v,l) (f tru) (f fls) in
+      f t
+
   let seq t u =
-    (* Compute the sequential composition of [t] and [u] as a fold over [t]. In
+(*     printf "seq %d %d (%d %d)\n%!" (T.compressed_size t) (T.compressed_size u)
+      (T.uncompressed_size t) (T.uncompressed_size u);
+ *)    (* Compute the sequential composition of [t] and [u] as a fold over [t]. In
        the case of a leaf node, each sequence [seq] of modifications is used to
        [restrict] the diagram for [u] and produce a new diagram [u'] that
        assumes (but does not explicitly represent) the state of the packet after
@@ -608,7 +624,7 @@ module Repr = struct
                               of the decision variables in [u] need to be
                               removed because there are none. *)
     | None   ->
-      T.fold
+      dp_fold
         (fun par ->
           Action.Par.fold par ~init:(T.const Action.zero) ~f:(fun acc seq ->
             let u' = T.restrict Action.Seq.(to_alist seq) u in
@@ -624,7 +640,7 @@ module Repr = struct
     else
       T.sum t u
 
-  let star t =
+  let star' lhs t =
     (* Compute [star t] by iterating to a fixed point.
 
        NOTE that the equality check is not semantic equivalence, so this may not
@@ -639,7 +655,9 @@ module Repr = struct
         then acc
         else loop acc' power'
     in
-    loop (T.const Action.one) (T.const Action.one)
+    loop (T.const Action.one) lhs
+
+  let star = star' (T.const Action.one)
 
   let rec of_pred p =
     let open NetKAT_Types in
@@ -662,11 +680,29 @@ module Repr = struct
     | Union (p, q) -> of_policy_k p (fun p' ->
                         of_policy_k q (fun q' ->
                           k (union p' q')))
-    | Seq (p, q) -> of_policy_k p (fun p' ->
-                      of_policy_k q (fun q' ->
-                        k (seq p' q')))
-    | Star p -> of_policy_k p (fun p' -> k (star p'))
-    | Link _ -> raise Non_local
+    | Seq (p, Star q) ->
+      of_policy_k p (fun p' ->
+        of_policy_k q (fun q' ->
+          k (star' p' q')))
+    | Seq (p, q) ->
+      of_policy_k p (fun p' ->
+        of_policy_k q (fun q' ->
+(*           (if NetKAT_Semantics.(size p > 30 || size q > 30) then
+            printf ">>> SEQ <<<<\n%s\n>>>> WITH <<<<<\n%s\n%!"
+              (NetKAT_Pretty.string_of_policy p)
+              (NetKAT_Pretty.string_of_policy q)
+          else
+            ()); *)
+          k (seq p' q')))
+    | Star p ->
+      printf "WARNING: Doing the really bad star\n";
+      of_policy_k p (fun p' ->
+        k (star p'))
+    | Link (sw1, pt1, sw2, pt2) ->
+      of_policy_k
+        (Seq (Filter (And (Test (Switch sw1), Test (Location (Physical pt1)))),
+              Seq (Mod (Switch sw2), Mod (Location (Physical pt2))))) k
+
     | DisjointUnion (p, q) ->
       of_policy_k p (fun u ->
         of_policy_k q (fun v ->
