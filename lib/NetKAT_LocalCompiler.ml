@@ -682,10 +682,6 @@ module Repr = struct
     | Union (p, q) -> of_policy_k p (fun p' ->
                         of_policy_k q (fun q' ->
                           k (union p' q')))
-    | Seq (p, Star q) ->
-      of_policy_k p (fun p' ->
-        of_policy_k q (fun q' ->
-          k (star' p' q')))
     | Seq (p, q) ->
       of_policy_k p (fun p' ->
         of_policy_k q (fun q' ->
@@ -697,7 +693,6 @@ module Repr = struct
             ()); *)
           k (seq p' q')))
     | Star p ->
-      printf "WARNING: Doing the really bad star\n";
       of_policy_k p (fun p' ->
         k (star p'))
     | Link (sw1, pt1, sw2, pt2) ->
