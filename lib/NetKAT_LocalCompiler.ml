@@ -651,8 +651,8 @@ module Repr = struct
     | Or (p, q) -> T.sum (of_pred p) (of_pred q)
     | Neg(q)    -> T.map_r Action.negate (of_pred q)
 
-  let disj test left right =
-    if Action.Par.is_empty test then right else left
+  let disj left right =
+    if Action.Par.is_empty left then right else left
 
   let rec of_policy_k p k =
     let open NetKAT_Types in
@@ -670,7 +670,7 @@ module Repr = struct
     | DisjointUnion (p, q) ->
       of_policy_k p (fun u ->
         of_policy_k q (fun v ->
-          k (T.apply3 disj u u v)))
+          k (T.sum_generalized disj u v)))
 
 
   let rec of_policy p = of_policy_k p ident
@@ -726,7 +726,7 @@ let compile ?(auto_order=false) pol =
     if auto_order then
       Field.auto_order pol
     else
-      Field.set_order Field.all_fields in
+      () in
   of_policy pol
 
 let clear_cache () = Repr.T.clear_cache ()
