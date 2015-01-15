@@ -323,8 +323,8 @@ let compare_eval_output p q pkt =
 let compare_compiler_output p q pkt =
   let open NetKAT_Semantics in
   PacketSet.compare
-    (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile p))))
-    (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile q))))
+    (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile ~order:`Heuristic p))))
+    (Flowterp.Packet.eval pkt (NetKAT_LocalCompiler.(to_table pkt.switch (compile ~order:`Heuristic q))))
   = 0
 
 let check gen_fn compare_fn =
@@ -332,6 +332,25 @@ let check gen_fn compare_fn =
   match QuickCheck.check gen_fn cfg compare_fn with
         QuickCheck.Success -> true
     | _                  -> false
+
+
+TEST "quickcheck NetKAT <-> JSON" =
+  let open NetKAT_Json in
+  let open Optimize in
+  let generate_policy_json =
+    let open QuickCheck in
+    let open QuickCheck_gen in
+    let open NetKAT_Arbitrary in
+    testable_fun
+      arbitrary_lf_pol
+      (fun p -> string_of_policy p ^ "\n" ^ policy_to_json_string p)
+      testable_bool in
+  let prop_parse_ok pol =
+    try
+      norm_policy (policy_from_json (policy_to_json pol)) = norm_policy pol
+    with _ -> false in
+  check generate_policy_json prop_parse_ok
+
 
 let get_masking_test =
   let ip1 = Int32.of_int(192 * 256*256*256 + 168 * 256*256 + 0 * 256 + 1 * 1) in
